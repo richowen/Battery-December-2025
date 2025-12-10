@@ -1,0 +1,569 @@
+[
+    {
+        "id": "e10b4adcc78d883c",
+        "type": "tab",
+        "label": "Immersion Control",
+        "disabled": false,
+        "info": "",
+        "env": []
+    },
+    {
+        "id": "2cc53072c305008c",
+        "type": "group",
+        "z": "e10b4adcc78d883c",
+        "style": {
+            "stroke": "#999999",
+            "stroke-opacity": "1",
+            "fill": "none",
+            "fill-opacity": "1",
+            "label": true,
+            "label-position": "nw",
+            "color": "#a4a4a4"
+        },
+        "nodes": [
+            "e7e510422de6b9f7",
+            "f0d3fac15c1d4a08",
+            "b56fec0f0ef78fb9",
+            "a8c6b974cb3d5840"
+        ],
+        "x": 274,
+        "y": 599,
+        "w": 592,
+        "h": 202
+    },
+    {
+        "id": "24b644704d413498",
+        "type": "group",
+        "z": "e10b4adcc78d883c",
+        "style": {
+            "stroke": "#999999",
+            "stroke-opacity": "1",
+            "fill": "none",
+            "fill-opacity": "1",
+            "label": true,
+            "label-position": "nw",
+            "color": "#a4a4a4"
+        },
+        "nodes": [
+            "45c2276f44054096",
+            "69bb79a6ecbf3100",
+            "92e02b4c2c11f0be",
+            "ff4eb4b445a557ca"
+        ],
+        "x": 274,
+        "y": 359,
+        "w": 592,
+        "h": 202
+    },
+    {
+        "id": "2228228f5aa91ea0",
+        "type": "group",
+        "z": "e10b4adcc78d883c",
+        "style": {
+            "stroke": "#999999",
+            "stroke-opacity": "1",
+            "fill": "none",
+            "fill-opacity": "1",
+            "label": true,
+            "label-position": "nw",
+            "color": "#a4a4a4"
+        },
+        "nodes": [
+            "0f942a9e088e8983",
+            "c50d96a461218d0f",
+            "3124750ceddcd012",
+            "fe7b2fde47636c14",
+            "9cab7da606170787"
+        ],
+        "x": 274,
+        "y": 119,
+        "w": 832,
+        "h": 202
+    },
+    {
+        "id": "0f942a9e088e8983",
+        "type": "api-current-state",
+        "z": "e10b4adcc78d883c",
+        "g": "2228228f5aa91ea0",
+        "name": "Temperature Check",
+        "server": "2f5e82bb.678dde",
+        "version": 3,
+        "outputs": 2,
+        "halt_if": "30",
+        "halt_if_type": "num",
+        "halt_if_compare": "gte",
+        "entity_id": "sensor.sonoff_1001e116e1_temperature",
+        "state_type": "str",
+        "blockInputOverrides": true,
+        "outputProperties": [
+            {
+                "property": "payload",
+                "propertyType": "msg",
+                "value": "",
+                "valueType": "entityState"
+            },
+            {
+                "property": "data",
+                "propertyType": "msg",
+                "value": "",
+                "valueType": "entity"
+            }
+        ],
+        "for": "2",
+        "forType": "num",
+        "forUnits": "minutes",
+        "override_topic": false,
+        "state_location": "payload",
+        "override_payload": "msg",
+        "entity_location": "data",
+        "override_data": "msg",
+        "x": 850,
+        "y": 220,
+        "wires": [
+            [
+                "3124750ceddcd012"
+            ],
+            [
+                "c50d96a461218d0f"
+            ]
+        ]
+    },
+    {
+        "id": "c50d96a461218d0f",
+        "type": "api-call-service",
+        "z": "e10b4adcc78d883c",
+        "g": "2228228f5aa91ea0",
+        "name": "ON",
+        "server": "2f5e82bb.678dde",
+        "version": 7,
+        "debugenabled": false,
+        "action": "switch.turn_on",
+        "floorId": [],
+        "areaId": [],
+        "deviceId": [],
+        "entityId": [
+            "switch.immersion_switch"
+        ],
+        "labelId": [],
+        "data": "",
+        "dataType": "jsonata",
+        "mergeContext": "",
+        "mustacheAltTags": false,
+        "outputProperties": [],
+        "queue": "none",
+        "blockInputOverrides": true,
+        "domain": "switch",
+        "service": "turn_on",
+        "x": 1030,
+        "y": 280,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "3124750ceddcd012",
+        "type": "api-call-service",
+        "z": "e10b4adcc78d883c",
+        "g": "2228228f5aa91ea0",
+        "name": "OFF",
+        "server": "2f5e82bb.678dde",
+        "version": 7,
+        "debugenabled": false,
+        "action": "switch.turn_off",
+        "floorId": [],
+        "areaId": [],
+        "deviceId": [],
+        "entityId": [
+            "switch.immersion_switch"
+        ],
+        "labelId": [],
+        "data": "",
+        "dataType": "jsonata",
+        "mergeContext": "",
+        "mustacheAltTags": false,
+        "outputProperties": [],
+        "queue": "none",
+        "blockInputOverrides": true,
+        "domain": "switch",
+        "service": "turn_off",
+        "x": 1030,
+        "y": 160,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "e7e510422de6b9f7",
+        "type": "thingzi-schedule",
+        "z": "e10b4adcc78d883c",
+        "g": "2cc53072c305008c",
+        "name": "Lucy Immersion",
+        "events": "[{\"start\":{\"dow\":3,\"mod\":900},\"end\":{\"dow\":3,\"mod\":1020}},{\"start\":{\"dow\":0,\"mod\":900},\"end\":{\"dow\":0,\"mod\":1020}}]",
+        "sendType": "msg",
+        "sendId": "payload",
+        "onPayloadType": "str",
+        "onPayload": "ON",
+        "offPayloadType": "str",
+        "offPayload": "OFF",
+        "startupMessage": true,
+        "sendOnEnable": true,
+        "x": 380,
+        "y": 700,
+        "wires": [
+            [
+                "f0d3fac15c1d4a08"
+            ]
+        ]
+    },
+    {
+        "id": "45c2276f44054096",
+        "type": "thingzi-schedule",
+        "z": "e10b4adcc78d883c",
+        "g": "24b644704d413498",
+        "name": "Immersion",
+        "events": "[{\"start\":{\"dow\":3,\"mod\":900},\"end\":{\"dow\":3,\"mod\":1020}},{\"start\":{\"dow\":0,\"mod\":900},\"end\":{\"dow\":0,\"mod\":1020}},{\"start\":{\"dow\":2,\"mod\":1140},\"end\":{\"dow\":2,\"mod\":1200}},{\"start\":{\"dow\":5,\"mod\":1140},\"end\":{\"dow\":5,\"mod\":1200}}]",
+        "sendType": "msg",
+        "sendId": "payload",
+        "onPayloadType": "str",
+        "onPayload": "ON",
+        "offPayloadType": "str",
+        "offPayload": "OFF",
+        "startupMessage": true,
+        "sendOnEnable": true,
+        "x": 370,
+        "y": 460,
+        "wires": [
+            [
+                "69bb79a6ecbf3100"
+            ]
+        ]
+    },
+    {
+        "id": "69bb79a6ecbf3100",
+        "type": "switch",
+        "z": "e10b4adcc78d883c",
+        "g": "24b644704d413498",
+        "name": "",
+        "property": "payload",
+        "propertyType": "msg",
+        "rules": [
+            {
+                "t": "eq",
+                "v": "ON",
+                "vt": "str"
+            },
+            {
+                "t": "eq",
+                "v": "OFF",
+                "vt": "str"
+            }
+        ],
+        "checkall": "true",
+        "repair": false,
+        "outputs": 2,
+        "x": 550,
+        "y": 460,
+        "wires": [
+            [
+                "92e02b4c2c11f0be"
+            ],
+            [
+                "ff4eb4b445a557ca"
+            ]
+        ]
+    },
+    {
+        "id": "f0d3fac15c1d4a08",
+        "type": "switch",
+        "z": "e10b4adcc78d883c",
+        "g": "2cc53072c305008c",
+        "name": "",
+        "property": "payload",
+        "propertyType": "msg",
+        "rules": [
+            {
+                "t": "eq",
+                "v": "ON",
+                "vt": "str"
+            },
+            {
+                "t": "eq",
+                "v": "OFF",
+                "vt": "str"
+            }
+        ],
+        "checkall": "true",
+        "repair": false,
+        "outputs": 2,
+        "x": 550,
+        "y": 700,
+        "wires": [
+            [
+                "b56fec0f0ef78fb9"
+            ],
+            [
+                "a8c6b974cb3d5840"
+            ]
+        ]
+    },
+    {
+        "id": "92e02b4c2c11f0be",
+        "type": "api-call-service",
+        "z": "e10b4adcc78d883c",
+        "g": "24b644704d413498",
+        "name": "ON",
+        "server": "2f5e82bb.678dde",
+        "version": 7,
+        "debugenabled": false,
+        "action": "switch.turn_on",
+        "floorId": [],
+        "areaId": [],
+        "deviceId": [],
+        "entityId": [
+            "switch.immersion_switch"
+        ],
+        "labelId": [],
+        "data": "",
+        "dataType": "jsonata",
+        "mergeContext": "",
+        "mustacheAltTags": false,
+        "outputProperties": [],
+        "queue": "none",
+        "blockInputOverrides": true,
+        "domain": "switch",
+        "service": "turn_on",
+        "x": 790,
+        "y": 400,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "b56fec0f0ef78fb9",
+        "type": "api-call-service",
+        "z": "e10b4adcc78d883c",
+        "g": "2cc53072c305008c",
+        "name": "ON",
+        "server": "2f5e82bb.678dde",
+        "version": 7,
+        "debugenabled": false,
+        "action": "switch.turn_on",
+        "floorId": [],
+        "areaId": [],
+        "deviceId": [],
+        "entityId": [
+            "switch.immersion_lucy_switch"
+        ],
+        "labelId": [],
+        "data": "",
+        "dataType": "jsonata",
+        "mergeContext": "",
+        "mustacheAltTags": false,
+        "outputProperties": [],
+        "queue": "none",
+        "blockInputOverrides": true,
+        "domain": "switch",
+        "service": "turn_on",
+        "x": 790,
+        "y": 640,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "ff4eb4b445a557ca",
+        "type": "api-call-service",
+        "z": "e10b4adcc78d883c",
+        "g": "24b644704d413498",
+        "name": "OFF",
+        "server": "2f5e82bb.678dde",
+        "version": 7,
+        "debugenabled": false,
+        "action": "switch.turn_off",
+        "floorId": [],
+        "areaId": [],
+        "deviceId": [],
+        "entityId": [
+            "switch.immersion_switch"
+        ],
+        "labelId": [],
+        "data": "",
+        "dataType": "jsonata",
+        "mergeContext": "",
+        "mustacheAltTags": false,
+        "outputProperties": [],
+        "queue": "none",
+        "blockInputOverrides": true,
+        "domain": "switch",
+        "service": "turn_off",
+        "x": 790,
+        "y": 520,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "a8c6b974cb3d5840",
+        "type": "api-call-service",
+        "z": "e10b4adcc78d883c",
+        "g": "2cc53072c305008c",
+        "name": "OFF",
+        "server": "2f5e82bb.678dde",
+        "version": 7,
+        "debugenabled": false,
+        "action": "switch.turn_off",
+        "floorId": [],
+        "areaId": [],
+        "deviceId": [],
+        "entityId": [
+            "switch.immersion_lucy_switch"
+        ],
+        "labelId": [],
+        "data": "",
+        "dataType": "jsonata",
+        "mergeContext": "",
+        "mustacheAltTags": false,
+        "outputProperties": [],
+        "queue": "none",
+        "blockInputOverrides": true,
+        "domain": "switch",
+        "service": "turn_off",
+        "x": 790,
+        "y": 760,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "fe7b2fde47636c14",
+        "type": "inject",
+        "z": "e10b4adcc78d883c",
+        "g": "2228228f5aa91ea0",
+        "name": "",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "60",
+        "crontab": "",
+        "once": true,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 390,
+        "y": 280,
+        "wires": [
+            [
+                "9cab7da606170787"
+            ]
+        ]
+    },
+    {
+        "id": "9cab7da606170787",
+        "type": "chronos-switch",
+        "z": "e10b4adcc78d883c",
+        "g": "2228228f5aa91ea0",
+        "name": "",
+        "config": "5286b98f4da6045b",
+        "baseTime": "",
+        "baseTimeType": "msgIngress",
+        "conditions": [
+            {
+                "operator": "between",
+                "label": "between 08:00 and 09:15",
+                "operands": [
+                    {
+                        "type": "time",
+                        "value": "08:00",
+                        "offset": 0,
+                        "random": 0,
+                        "precision": "millisecond"
+                    },
+                    {
+                        "type": "time",
+                        "value": "09:15",
+                        "offset": 0,
+                        "random": 0,
+                        "precision": "millisecond"
+                    }
+                ]
+            },
+            {
+                "operator": "between",
+                "label": "between 13:00 and 14:00",
+                "operands": [
+                    {
+                        "type": "time",
+                        "value": "13:00",
+                        "offset": 0,
+                        "random": 0,
+                        "precision": "millisecond"
+                    },
+                    {
+                        "type": "time",
+                        "value": "14:00",
+                        "offset": 0,
+                        "random": 0,
+                        "precision": "millisecond"
+                    }
+                ]
+            }
+        ],
+        "stopOnFirstMatch": false,
+        "outputs": 2,
+        "x": 590,
+        "y": 280,
+        "wires": [
+            [
+                "0f942a9e088e8983"
+            ],
+            [
+                "0f942a9e088e8983"
+            ]
+        ]
+    },
+    {
+        "id": "2f5e82bb.678dde",
+        "type": "server",
+        "name": "Home Assistant",
+        "addon": true,
+        "rejectUnauthorizedCerts": true,
+        "ha_boolean": "",
+        "connectionDelay": false,
+        "cacheJson": false,
+        "heartbeat": false,
+        "heartbeatInterval": "",
+        "areaSelector": "friendlyName",
+        "deviceSelector": "friendlyName",
+        "entitySelector": "friendlyName",
+        "statusSeparator": ",",
+        "statusTimeFormat": "h:m:s",
+        "enableGlobalContextStore": true
+    },
+    {
+        "id": "5286b98f4da6045b",
+        "type": "chronos-config",
+        "name": "Time",
+        "latitudeType": "num",
+        "longitudeType": "num",
+        "timezone": "Europe/London",
+        "timezoneType": "str",
+        "sunPositions": []
+    },
+    {
+        "id": "66cff0627be3d96c",
+        "type": "global-config",
+        "env": [],
+        "modules": {
+            "node-red-contrib-home-assistant-websocket": "0.80.3",
+            "thingzi-logic-timers": "1.4.6",
+            "node-red-contrib-chronos": "1.28.0"
+        }
+    }
+]

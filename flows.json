@@ -1,0 +1,1070 @@
+[
+    {
+        "id": "6ab2083af5df0d88",
+        "type": "tab",
+        "label": "Solar Battery Control V3 - Modular",
+        "disabled": false,
+        "info": "Refactored modular solar+price aware battery management with clean architecture",
+        "env": []
+    },
+    {
+        "id": "2731ce52d36e75c4",
+        "type": "inject",
+        "z": "6ab2083af5df0d88",
+        "name": "Initialize Config",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": true,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "{}",
+        "payloadType": "json",
+        "x": 140,
+        "y": 80,
+        "wires": [
+            [
+                "3ab2af9903a095b0"
+            ]
+        ]
+    },
+    {
+        "id": "3ab2af9903a095b0",
+        "type": "function",
+        "z": "6ab2083af5df0d88",
+        "name": "Config Manager",
+        "func": "// Configuration Manager Function Node\n// This centralizes all system configuration and validates settings\n\nconst CONFIG = {\n    version: \"2.0\",\n    updated: new Date().toISOString(),\n    \n    thresholds: {\n        battery: {\n            low: 11,           // Low SoC threshold (%)\n            high: 95,          // High SoC threshold (%)\n            full: 99,          // Full battery threshold (%)\n            preserve: 30       // Minimum for export scenarios (%)\n        },\n        price: {\n            cheap_percentile: 0.20,      // Bottom 10% = cheap\n            expensive_percentile: 0.75,  // Top 25% = expensive\n            export_worthy: 20,           // Price threshold for export (p/kWh)\n            immersion_trigger: 2        // Very negative price for immersion (p/kWh)\n        },\n        solar: {\n            high_threshold: 5,    // kW - considered high solar\n            low_threshold: 1,     // kW - considered low solar\n            forecast_horizon: 1   // Hours ahead to consider\n        }\n    },\n    \n    timeWindows: {\n        afternoon: { start: 12, end: 18 },\n        evening: { start: 18, end: 23 },\n        night: { start: 23, end: 6 },\n        topup: { start: 15, end: 16 }\n    },\n    \n    devices: {\n        battery: {\n            discharge_entity: \"number.foxinverter_max_discharge_current\",\n            mode_entity: \"select.foxinverter_work_mode\",\n            soc_entity: \"sensor.foxinverter_battery_soc\"\n        },\n        immersion: {\n            switches: [\n                \"switch.immersion_switch\",\n                \"switch.immersion_lucy_switch\"\n            ]\n        },\n        solar: {\n            current_power: \"sensor.pv_power_foxinverter\",\n            forecast_remaining: \"sensor.solcast_pv_forecast_forecast_remaining_today\",\n            forecast_next_hour: \"sensor.solcast_pv_forecast_power_in_1_hour\"\n        }\n    },\n    \n    api: {\n        octopus_url: \"https://api.octopus.energy/v1/products/AGILE-24-10-01/electricity-tariffs/E-1R-AGILE-24-10-01-E/standard-unit-rates/\",\n        fetch_schedule: \"0 6 * * *\", // Daily at 6 AM\n        fetch_days: 7 // Fetch 7 days of data\n    },\n    \n    logging: {\n        influx_measurement: \"electricity_prices\",\n        debug_enabled: true\n    }\n};\n\n// Configuration validation function\nfunction validateConfig(config) {\n    const errors = [];\n    \n    // Validate battery thresholds\n    if (!config.thresholds?.battery?.low || config.thresholds.battery.low < 0 || config.thresholds.battery.low > 100) {\n        errors.push(\"Invalid battery low threshold - must be 0-100\");\n    }\n    \n    if (!config.thresholds?.battery?.high || config.thresholds.battery.high < 0 || config.thresholds.battery.high > 100) {\n        errors.push(\"Invalid battery high threshold - must be 0-100\");\n    }\n    \n    if (config.thresholds.battery.low >= config.thresholds.battery.high) {\n        errors.push(\"Battery low threshold must be less than high threshold\");\n    }\n    \n    // Validate price thresholds\n    if (!config.thresholds?.price?.cheap_percentile || \n        config.thresholds.price.cheap_percentile < 0 || \n        config.thresholds.price.cheap_percentile > 1) {\n        errors.push(\"Invalid cheap price percentile - must be 0-1\");\n    }\n    \n    if (!config.thresholds?.price?.expensive_percentile || \n        config.thresholds.price.expensive_percentile < 0 || \n        config.thresholds.price.expensive_percentile > 1) {\n        errors.push(\"Invalid expensive price percentile - must be 0-1\");\n    }\n    \n    if (config.thresholds.price.cheap_percentile >= config.thresholds.price.expensive_percentile) {\n        errors.push(\"Cheap percentile must be less than expensive percentile\");\n    }\n    \n    // Validate solar thresholds\n    if (!config.thresholds?.solar?.high_threshold || config.thresholds.solar.high_threshold < 0) {\n        errors.push(\"Invalid solar high threshold - must be positive\");\n    }\n    \n    if (!config.thresholds?.solar?.low_threshold || config.thresholds.solar.low_threshold < 0) {\n        errors.push(\"Invalid solar low threshold - must be positive\");\n    }\n    \n    if (config.thresholds.solar.low_threshold >= config.thresholds.solar.high_threshold) {\n        errors.push(\"Solar low threshold must be less than high threshold\");\n    }\n    \n    // Validate device entities\n    if (!config.devices?.battery?.discharge_entity) {\n        errors.push(\"Missing battery discharge entity\");\n    }\n    \n    if (!config.devices?.battery?.mode_entity) {\n        errors.push(\"Missing battery mode entity\");\n    }\n    \n    if (!config.devices?.battery?.soc_entity) {\n        errors.push(\"Missing battery SoC entity\");\n    }\n    \n    if (!config.devices?.immersion?.switches || !Array.isArray(config.devices.immersion.switches)) {\n        errors.push(\"Missing or invalid immersion switches array\");\n    }\n    \n    // Validate time windows\n    Object.entries(config.timeWindows).forEach(([name, window]) => {\n        if (typeof window.start !== 'number' || window.start < 0 || window.start >= 24) {\n            errors.push(`Invalid start time for ${name} window`);\n        }\n        if (typeof window.end !== 'number' || window.end < 0 || window.end >= 24) {\n            errors.push(`Invalid end time for ${name} window`);\n        }\n    });\n    \n    return {\n        valid: errors.length === 0,\n        errors: errors\n    };\n}\n\n// Main configuration function\nfunction initializeConfig() {\n    try {\n        // Validate configuration\n        const validation = validateConfig(CONFIG);\n        \n        if (!validation.valid) {\n            node.error(\"Configuration validation failed: \" + validation.errors.join(\", \"));\n            node.status({\n                fill: 'red',\n                shape: 'ring',\n                text: `Config invalid: ${validation.errors.length} errors`\n            });\n            return null;\n        }\n        \n        // Store configuration in flow context\n        flow.set('system_config', CONFIG);\n        flow.set('config_version', CONFIG.version);\n        flow.set('config_updated', CONFIG.updated);\n        \n        // Log successful initialization\n        node.log(`Configuration v${CONFIG.version} loaded successfully`);\n        node.status({\n            fill: 'green',\n            shape: 'dot',\n            text: `Config v${CONFIG.version} loaded - ${new Date().toLocaleTimeString()}`\n        });\n        \n        return {\n            payload: {\n                status: 'success',\n                version: CONFIG.version,\n                updated: CONFIG.updated,\n                config: CONFIG\n            }\n        };\n        \n    } catch (error) {\n        node.error(\"Configuration initialization failed: \" + error.message);\n        node.status({\n            fill: 'red',\n            shape: 'ring',\n            text: 'Config error'\n        });\n        return null;\n    }\n}\n\n// Execute configuration initialization\nreturn initializeConfig();",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 360,
+        "y": 80,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "c1918c714ae0fc90",
+        "type": "crontinject",
+        "z": "6ab2083af5df0d88",
+        "name": "Fetch Prices",
+        "props": [],
+        "repeat": "",
+        "crontab": "",
+        "once": true,
+        "onceDelay": "1",
+        "topic": "",
+        "crontiMethod": "onCrontime",
+        "crontiArgs": "[\"*/28 * * * *\"]",
+        "inputs": 0,
+        "hasButton": true,
+        "x": 140,
+        "y": 180,
+        "wires": [
+            [
+                "3eef13cddbe27a5e"
+            ]
+        ]
+    },
+    {
+        "id": "3eef13cddbe27a5e",
+        "type": "http request",
+        "z": "6ab2083af5df0d88",
+        "name": "Octopus API",
+        "method": "GET",
+        "ret": "obj",
+        "paytoqs": "ignore",
+        "url": "https://api.octopus.energy/v1/products/AGILE-24-10-01/electricity-tariffs/E-1R-AGILE-24-10-01-E/standard-unit-rates/",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [],
+        "x": 350,
+        "y": 180,
+        "wires": [
+            [
+                "86416ecf3e61716d"
+            ]
+        ]
+    },
+    {
+        "id": "86416ecf3e61716d",
+        "type": "function",
+        "z": "6ab2083af5df0d88",
+        "name": "Price Fetcher",
+        "func": "// Simplified Price Fetcher Function Node\n// Fetches and processes today's price data only\n\nfunction fetchPrices(msg) {\n    try {\n        // Input validation\n        if (!msg.payload?.results) {\n            node.error(\"Invalid API response format - missing results array\");\n            node.status({\n                fill: 'red',\n                shape: 'ring',\n                text: 'Invalid API response'\n            });\n            return null;\n        }\n\n        const rawPrices = msg.payload.results;\n\n        if (!Array.isArray(rawPrices) || rawPrices.length === 0) {\n            node.error(\"No price data received from API\");\n            node.status({\n                fill: 'red',\n                shape: 'ring',\n                text: 'No price data'\n            });\n            return null;\n        }\n\n        // Get today's date for filtering\n        const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD\n\n        // Process raw API data and filter for today only\n        const todayPrices = rawPrices\n            .map(rate => {\n                try {\n                    const fromDate = new Date(rate.valid_from);\n                    const toDate = new Date(rate.valid_to);\n                    const priceDate = fromDate.toISOString().split('T')[0];\n\n                    // Only include today's prices\n                    if (priceDate !== today) {\n                        return null;\n                    }\n\n                    return {\n                        from: fromDate,\n                        to: toDate,\n                        price: parseFloat(rate.value_inc_vat),\n                        hour: fromDate.getHours()\n                    };\n                } catch (error) {\n                    node.warn(`Invalid price period data: ${error.message}`);\n                    return null;\n                }\n            })\n            .filter(price => price !== null);\n\n        if (todayPrices.length === 0) {\n            node.error(\"No valid price periods found for today\");\n            node.status({\n                fill: 'red',\n                shape: 'ring',\n                text: 'No today prices'\n            });\n            return null;\n        }\n\n        // Sort by time for consistency\n        todayPrices.sort((a, b) => a.from.getTime() - b.from.getTime());\n\n        const fetchTimestamp = new Date().toISOString();\n\n        node.log(`Successfully processed ${todayPrices.length} price periods for today`);\n        node.status({\n            fill: 'green',\n            shape: 'dot',\n            text: `Fetched ${todayPrices.length} periods - ${new Date().toLocaleTimeString()}`\n        });\n\n        return {\n            payload: todayPrices,\n            metadata: {\n                fetch_timestamp: fetchTimestamp,\n                total_periods: todayPrices.length,\n                date: today\n            }\n        };\n\n    } catch (error) {\n        node.error(\"Price fetcher error: \" + error.message);\n        node.status({\n            fill: 'red',\n            shape: 'ring',\n            text: 'Fetch error'\n        });\n        return null;\n    }\n}\n\n// Execute price fetching\nreturn fetchPrices(msg);",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 570,
+        "y": 180,
+        "wires": [
+            [
+                "1d7acd9c73426086"
+            ]
+        ]
+    },
+    {
+        "id": "1d7acd9c73426086",
+        "type": "function",
+        "z": "6ab2083af5df0d88",
+        "name": "Price Analyzer",
+        "func": "// Simplified Price Analyzer Function Node\n// Basic analysis for today's price data only\n\nfunction analyzePrices(msg) {\n    try {\n        const config = flow.get('system_config');\n        if (!config) {\n            node.error(\"System configuration not found - ensure Config Manager has run\");\n            node.status({\n                fill: 'red',\n                shape: 'ring',\n                text: 'No config'\n            });\n            return null;\n        }\n\n        const prices = msg.payload;\n\n        if (!Array.isArray(prices) || prices.length === 0) {\n            node.error(\"No price data received for analysis\");\n            node.status({\n                fill: 'red',\n                shape: 'ring',\n                text: 'No price data'\n            });\n            return null;\n        }\n\n        // Extract price values and sort for threshold calculation\n        const values = prices.map(p => p.price).sort((a, b) => a - b);\n\n        // Calculate thresholds based on percentiles\n        const cheapIndex = Math.floor(values.length * config.thresholds.price.cheap_percentile);\n        const expensiveIndex = Math.floor(values.length * config.thresholds.price.expensive_percentile);\n\n        const cheapThreshold = values[cheapIndex];\n        const expensiveThreshold = values[expensiveIndex];\n\n        // Basic statistics\n        const mean = values.reduce((sum, val) => sum + val, 0) / values.length;\n        const median = values[Math.floor(values.length / 2)];\n\n        // Count classifications\n        const negative = values.filter(v => v < 0).length;\n        const cheap = values.filter(v => v >= 0 && v <= cheapThreshold).length;\n        const normal = values.filter(v => v > cheapThreshold && v < expensiveThreshold).length;\n        const expensive = values.filter(v => v >= expensiveThreshold).length;\n\n        const analysis = {\n            timestamp: new Date().toISOString(),\n            total_periods: prices.length,\n            price_stats: {\n                min: values[0],\n                max: values[values.length - 1],\n                mean: parseFloat(mean.toFixed(3)),\n                median: median\n            },\n            thresholds: {\n                cheap: cheapThreshold,\n                expensive: expensiveThreshold\n            },\n            classifications: {\n                negative: negative,\n                cheap: cheap,\n                normal: normal,\n                expensive: expensive\n            }\n        };\n\n        // Store analysis in flow context\n        flow.set('price.analysis', analysis);\n        flow.set('price.analysis_updated', analysis.timestamp);\n\n        node.log(`Price analysis complete: ${prices.length} periods, ` +\n            `avg: ${analysis.price_stats.mean.toFixed(2)}p, ` +\n            `${negative} negative, ${cheap} cheap, ${normal} normal, ${expensive} expensive`);\n\n        node.status({\n            fill: 'blue',\n            shape: 'dot',\n            text: `${prices.length}p | avg: ${analysis.price_stats.mean.toFixed(1)}p | ${negative}n ${cheap}c ${normal}n ${expensive}e`\n        });\n\n        return {\n            payload: prices,\n            analysis: analysis,\n            metadata: msg.metadata\n        };\n\n    } catch (error) {\n        node.error(\"Price analysis error: \" + error.message);\n        node.status({\n            fill: 'red',\n            shape: 'ring',\n            text: 'Analysis error'\n        });\n        return null;\n    }\n}\n\n// Execute price analysis\nreturn analyzePrices(msg);",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 800,
+        "y": 180,
+        "wires": [
+            [
+                "1cc0ec26479884b7"
+            ]
+        ]
+    },
+    {
+        "id": "1cc0ec26479884b7",
+        "type": "function",
+        "z": "6ab2083af5df0d88",
+        "name": "Price Classifier",
+        "func": "// Simplified Price Classifier Function Node\n// Basic classification: negative, cheap, normal, expensive\n\nfunction classifyPrices(msg) {\n    try {\n        const prices = msg.payload;\n        const analysis = msg.analysis;\n\n        if (!Array.isArray(prices)) {\n            node.error(\"Prices payload is not an array\");\n            node.status({\n                fill: 'red',\n                shape: 'ring',\n                text: 'Invalid prices'\n            });\n            return null;\n        }\n\n        if (!analysis || !analysis.thresholds) {\n            node.error(\"Analysis or thresholds missing\");\n            node.status({\n                fill: 'red',\n                shape: 'ring',\n                text: 'Missing analysis'\n            });\n            return null;\n        }\n\n        // Classify each price period\n        const classifiedPrices = prices.map((period, index) => {\n            try {\n                // Validate required fields\n                if (typeof period.price !== 'number') {\n                    throw new Error(`Invalid price type at index ${index}: ${typeof period.price}`);\n                }\n\n                if (typeof period.hour !== 'number' || period.hour < 0 || period.hour > 23) {\n                    throw new Error(`Invalid hour at index ${index}: ${period.hour}`);\n                }\n\n                // Classify based on thresholds\n                let classification;\n                if (period.price < 0) {\n                    classification = 'negative';\n                } else if (period.price <= analysis.thresholds.cheap) {\n                    classification = 'cheap';\n                } else if (period.price >= analysis.thresholds.expensive) {\n                    classification = 'expensive';\n                } else {\n                    classification = 'normal';\n                }\n\n                return {\n                    ...period,\n                    classification: classification\n                };\n\n            } catch (error) {\n                node.warn(`Error classifying price at index ${index}: ${error.message}`);\n                return {\n                    ...period,\n                    classification: 'error',\n                    error: error.message\n                };\n            }\n        });\n\n        // Calculate classification statistics\n        const stats = {\n            total: classifiedPrices.length,\n            negative: classifiedPrices.filter(p => p.classification === 'negative').length,\n            cheap: classifiedPrices.filter(p => p.classification === 'cheap').length,\n            normal: classifiedPrices.filter(p => p.classification === 'normal').length,\n            expensive: classifiedPrices.filter(p => p.classification === 'expensive').length,\n            errors: classifiedPrices.filter(p => p.classification === 'error').length\n        };\n\n        node.log(`Classified ${stats.total} prices: ` +\n            `${stats.negative} negative, ${stats.cheap} cheap, ` +\n            `${stats.normal} normal, ${stats.expensive} expensive` +\n            (stats.errors > 0 ? `, ${stats.errors} errors` : ''));\n\n        node.status({\n            fill: stats.errors > 0 ? 'yellow' : 'green',\n            shape: 'dot',\n            text: `${stats.negative}n ${stats.cheap}c ${stats.normal}n ${stats.expensive}e - ${new Date().toLocaleTimeString()}`\n        });\n\n        // Store classified price data in flow context for Context Builder\n        flow.set('price.all', classifiedPrices);\n        flow.set('price.classification_stats', stats);\n        flow.set('price.last_updated', new Date().toISOString());\n        \n        // Store negative prices separately for quick access\n        const negativeClassifiedPrices = classifiedPrices.filter(p => p.classification === 'negative');\n        flow.set('price.negative', negativeClassifiedPrices);\n        \n        node.log(`Stored ${classifiedPrices.length} classified prices in flow context (${negativeClassifiedPrices.length} negative)`);\n\n        return {\n            payload: classifiedPrices,\n            analysis: analysis,\n            classification_stats: stats,\n            metadata: msg.metadata\n        };\n\n    } catch (error) {\n        node.error(\"Price classifier error: \" + error.message);\n        node.status({\n            fill: 'red',\n            shape: 'ring',\n            text: 'Classifier error'\n        });\n        return null;\n    }\n}\n\n// Execute price classification\nreturn classifyPrices(msg);",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1040,
+        "y": 180,
+        "wires": [
+            [
+                "383e089862fe8781"
+            ]
+        ]
+    },
+    {
+        "id": "af2a0e066d3f6676",
+        "type": "influxdb batch",
+        "z": "6ab2083af5df0d88",
+        "influxdb": "01799f774790daf6",
+        "precision": "",
+        "retentionPolicy": "",
+        "name": "Log Prices",
+        "database": "database",
+        "precisionV18FluxV20": "ns",
+        "retentionPolicyV18Flux": "",
+        "org": "unraid",
+        "bucket": "node-red",
+        "x": 1270,
+        "y": 120,
+        "wires": []
+    },
+    {
+        "id": "aab023dd79207d8a",
+        "type": "crontinject",
+        "z": "6ab2083af5df0d88",
+        "name": "5min Decision",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": true,
+        "onceDelay": "2",
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "crontiMethod": "onCrontime",
+        "crontiArgs": "[\"*/5 * * * *\"]",
+        "inputs": 0,
+        "hasButton": true,
+        "x": 140,
+        "y": 280,
+        "wires": [
+            [
+                "0000f4adc123bd6c"
+            ]
+        ]
+    },
+    {
+        "id": "0000f4adc123bd6c",
+        "type": "api-current-state",
+        "z": "6ab2083af5df0d88",
+        "name": "Solar Remaining",
+        "server": "2f5e82bb.678dde",
+        "version": 3,
+        "outputs": 1,
+        "halt_if": "",
+        "halt_if_type": "str",
+        "halt_if_compare": "is",
+        "entity_id": "sensor.solcast_pv_forecast_forecast_remaining_today",
+        "state_type": "str",
+        "blockInputOverrides": true,
+        "outputProperties": [
+            {
+                "property": "solar_remain",
+                "propertyType": "msg",
+                "value": "",
+                "valueType": "entityState"
+            }
+        ],
+        "for": "0",
+        "forType": "num",
+        "forUnits": "minutes",
+        "override_topic": false,
+        "state_location": "payload",
+        "override_payload": "msg",
+        "entity_location": "data",
+        "override_data": "msg",
+        "x": 370,
+        "y": 280,
+        "wires": [
+            [
+                "3cd53e339cdaac3a"
+            ]
+        ]
+    },
+    {
+        "id": "3cd53e339cdaac3a",
+        "type": "api-current-state",
+        "z": "6ab2083af5df0d88",
+        "name": "Solar Current",
+        "server": "2f5e82bb.678dde",
+        "version": 3,
+        "outputs": 1,
+        "halt_if": "",
+        "halt_if_type": "str",
+        "halt_if_compare": "is",
+        "entity_id": "sensor.pv_power_foxinverter",
+        "state_type": "str",
+        "blockInputOverrides": true,
+        "outputProperties": [
+            {
+                "property": "solar_now",
+                "propertyType": "msg",
+                "value": "",
+                "valueType": "entityState"
+            }
+        ],
+        "for": "0",
+        "forType": "num",
+        "forUnits": "minutes",
+        "override_topic": false,
+        "state_location": "payload",
+        "override_payload": "msg",
+        "entity_location": "data",
+        "override_data": "msg",
+        "x": 570,
+        "y": 280,
+        "wires": [
+            [
+                "9a8a1757cac3b249"
+            ]
+        ]
+    },
+    {
+        "id": "9a8a1757cac3b249",
+        "type": "api-current-state",
+        "z": "6ab2083af5df0d88",
+        "name": "Solar Forecast",
+        "server": "2f5e82bb.678dde",
+        "version": 3,
+        "outputs": 1,
+        "halt_if": "",
+        "halt_if_type": "str",
+        "halt_if_compare": "is",
+        "entity_id": "sensor.solcast_pv_forecast_power_in_1_hour",
+        "state_type": "str",
+        "blockInputOverrides": true,
+        "outputProperties": [
+            {
+                "property": "solar_next",
+                "propertyType": "msg",
+                "value": "",
+                "valueType": "entityState"
+            }
+        ],
+        "for": "0",
+        "forType": "num",
+        "forUnits": "minutes",
+        "override_topic": false,
+        "state_location": "payload",
+        "override_payload": "msg",
+        "entity_location": "data",
+        "override_data": "msg",
+        "x": 800,
+        "y": 280,
+        "wires": [
+            [
+                "e0bac86d6fd0924c"
+            ]
+        ]
+    },
+    {
+        "id": "e0bac86d6fd0924c",
+        "type": "api-current-state",
+        "z": "6ab2083af5df0d88",
+        "name": "Battery SoC",
+        "server": "2f5e82bb.678dde",
+        "version": 3,
+        "outputs": 1,
+        "halt_if": "",
+        "halt_if_type": "str",
+        "halt_if_compare": "is",
+        "entity_id": "sensor.foxinverter_battery_soc",
+        "state_type": "str",
+        "blockInputOverrides": true,
+        "outputProperties": [
+            {
+                "property": "soc",
+                "propertyType": "msg",
+                "value": "",
+                "valueType": "entityState"
+            }
+        ],
+        "for": "0",
+        "forType": "num",
+        "forUnits": "minutes",
+        "override_topic": false,
+        "state_location": "payload",
+        "override_payload": "msg",
+        "entity_location": "data",
+        "override_data": "msg",
+        "x": 1030,
+        "y": 280,
+        "wires": [
+            [
+                "dee45516f5b23485"
+            ]
+        ]
+    },
+    {
+        "id": "dee45516f5b23485",
+        "type": "function",
+        "z": "6ab2083af5df0d88",
+        "name": "Context Builder",
+        "func": "// Context Builder Function Node\n// Aggregates all input data into a comprehensive decision context\n\nfunction buildDecisionContext(msg) {\n    try {\n        const config = flow.get('system_config');\n        if (!config) {\n            node.error(\"System configuration not found\");\n            node.status({\n                fill: 'red',\n                shape: 'ring',\n                text: 'No config'\n            });\n            return null;\n        }\n        \n        // DIAGNOSTIC: Check what price data is available in flow context\n        const priceData = flow.get('price.all') || [];\n        const priceAnalysis = flow.get('price.analysis') || {};\n        const negativePrices = flow.get('price.negative') || [];\n        \n        // DIAGNOSTIC: Log all available flow context keys related to price\n        const allFlowKeys = flow.keys().filter(key => key.includes('price'));\n        node.warn(`DIAGNOSTIC: Available price-related flow keys: ${JSON.stringify(allFlowKeys)}`);\n        node.warn(`DIAGNOSTIC: price.all length: ${priceData.length}`);\n        node.warn(`DIAGNOSTIC: price.analysis keys: ${JSON.stringify(Object.keys(priceAnalysis))}`);\n        node.warn(`DIAGNOSTIC: price.negative length: ${negativePrices.length}`);\n        \n        if (priceData.length === 0) {\n            node.error(\"No price data available - ensure price processing has completed\");\n            node.status({\n                fill: 'red',\n                shape: 'ring',\n                text: 'No price data'\n            });\n            return null;\n        }\n        \n        const now = new Date();\n        const currentHour = now.getHours() + now.getMinutes() / 60;\n        \n        // Find current price period\n        const currentPrice = priceData.find(p => {\n            const start = p.from.getTime();\n            const end = p.to.getTime();\n            const nowTime = now.getTime();\n            return nowTime >= start && nowTime < end;\n        });\n        \n        if (!currentPrice) {\n            node.error(\"Cannot find current price period\");\n            node.status({\n                fill: 'red',\n                shape: 'ring',\n                text: 'No current price'\n            });\n            return null;\n        }\n        \n        // Extract input data with validation\n        const soc = Number(msg.soc) || 0;\n        const solarNow = Number(msg.solar_now) || 0;\n        const solarNext = Number(msg.solar_next) / 1000 || 0; // Convert W to kW\n        const solarRemain = Number(msg.solar_remain) || 0;\n        \n        // Build comprehensive context\n        const context = {\n            timestamp: now.toISOString(),\n            \n            time: {\n                hour: now.getHours(),\n                minute: now.getMinutes(),\n                decimal: currentHour,\n                is_afternoon: currentHour >= config.timeWindows.afternoon.start && \n                             currentHour < config.timeWindows.afternoon.end,\n                is_evening: currentHour >= config.timeWindows.evening.start && \n                           currentHour < config.timeWindows.evening.end,\n                is_night: currentHour >= config.timeWindows.night.start || \n                         currentHour < config.timeWindows.night.end,\n                is_topup_window: currentHour >= config.timeWindows.topup.start && \n                                currentHour < config.timeWindows.topup.end\n            },\n            \n            battery: {\n                soc: soc,\n                is_low: soc < config.thresholds.battery.low,\n                is_high: soc >= config.thresholds.battery.high,\n                is_full: soc >= config.thresholds.battery.full,\n                needs_preserve: soc <= config.thresholds.battery.preserve\n            },\n            \n            solar: {\n                current: solarNow,\n                next_hour: solarNext,\n                remaining_today: solarRemain,\n                is_high: solarNow >= config.thresholds.solar.high_threshold,\n                is_low: solarNow < config.thresholds.solar.low_threshold,\n                forecast_high: solarNext >= config.thresholds.solar.high_threshold\n            },\n            \n            price: {\n                current: currentPrice.price,\n                classification: currentPrice.classification,\n                is_negative: currentPrice.classification === 'negative',\n                is_cheap: currentPrice.classification === 'cheap',\n                is_expensive: currentPrice.is_expensive,\n                is_export_worthy: currentPrice.price >= config.thresholds.price.export_worthy,\n                is_immersion_worthy: currentPrice.price < config.thresholds.price.immersion_trigger\n            },\n            \n            market: {\n                negative_periods_remaining: negativePrices.filter(p => \n                    p.from.getTime() > now.getTime() && \n                    p.from.getHours() < 16\n                ).length,\n                immediate_negative: negativePrices.some(p => {\n                    const startTime = p.from.getHours() + p.from.getMinutes() / 60;\n                    return startTime >= currentHour && startTime <= currentHour + 0.5;\n                }),\n                next_cheap_period: priceData.find(p => \n                    p.from.getTime() > now.getTime() && p.classification === 'cheap'\n                ),\n                next_expensive_period: priceData.find(p => \n                    p.from.getTime() > now.getTime() && p.classification === 'expensive'\n                )\n            }\n        };\n        \n        // Add derived context flags\n        context.flags = {\n            high_solar_afternoon: context.solar.is_high && context.time.is_afternoon,\n            low_solar_evening: context.solar.is_low && context.time.is_evening,\n            export_opportunity: context.price.is_export_worthy && context.solar.is_high,\n            charge_opportunity: context.price.is_negative || context.price.is_cheap,\n            preserve_battery: context.battery.is_low || \n                            (context.market.negative_periods_remaining > 0 && context.battery.soc > 40),\n            immersion_opportunity: context.price.is_immersion_worthy &&\n                (context.battery.is_full || context.solar.is_high) \n        };\n        \n        // Store context for debugging and other components\n        flow.set('decision.context', context);\n        flow.set('decision.context_updated', context.timestamp);\n        \n        node.log(`Context built: SoC ${soc}%, Solar ${solarNow.toFixed(1)}kW, ` +\n                 `Price ${currentPrice.price.toFixed(2)}p (${currentPrice.classification}), ` +\n                 `Time ${now.getHours()}:${now.getMinutes().toString().padStart(2, '0')}`);\n        \n        node.status({\n            fill: currentPrice.classification === 'negative' ? 'red' : \n                  currentPrice.is_expensive ? 'orange' : \n                  context.solar.is_high ? 'green' : 'blue',\n            shape: 'dot',\n            text: `${soc}% | ${solarNow.toFixed(1)}kW | ${currentPrice.price.toFixed(1)}p | ${currentPrice.classification}`\n        });\n        \n        return {\n            payload: context\n        };\n        \n    } catch (error) {\n        node.error(\"Context builder error: \" + error.message);\n        node.status({\n            fill: 'red',\n            shape: 'ring',\n            text: 'Context error'\n        });\n        return null;\n    }\n}\n\n// Execute context building\nreturn buildDecisionContext(msg);",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1280,
+        "y": 280,
+        "wires": [
+            [
+                "6bb1a012ae62b207",
+                "79d8ee35674a1f3c",
+                "context_input"
+            ]
+        ]
+    },
+    {
+        "id": "6bb1a012ae62b207",
+        "type": "function",
+        "z": "6ab2083af5df0d88",
+        "name": "Rule Evaluator",
+        "func": "// Rule Evaluator Function Node\n// Implements the rule-based decision system with priority-based evaluation\n\nfunction evaluateRules(msg) {\n    try {\n        const config = flow.get('system_config');\n        if (!config) {\n            node.error(\"System configuration not found\");\n            node.status({\n                fill: 'red',\n                shape: 'ring',\n                text: 'No config'\n            });\n            return null;\n        }\n\n        const context = msg.payload;\n        if (!context) {\n            node.error(\"No decision context provided\");\n            node.status({\n                fill: 'red',\n                shape: 'ring',\n                text: 'No context'\n            });\n            return null;\n        }\n\n        // Debug: Log the context structure\n        node.log(`Context received: ${JSON.stringify(Object.keys(context))}`);\n        if (context.solar) {\n            node.log(`Solar context: ${JSON.stringify(Object.keys(context.solar))}`);\n        }\n\n        // Define decision rules with priorities (lower number = higher priority)\n        const RULES = [\n            {\n                name: 'negative_price_full_battery',\n                priority: 1,\n                condition: function (ctx) { return ctx.price.is_negative && ctx.battery.is_full; },\n                action: {\n                    mode: 'Self Use',\n                    discharge: 0,\n                    immersion: true,\n                    reason: 'Negative price + full battery → immersion heating'\n                },\n                description: 'Use excess energy for immersion when battery full during negative pricing'\n            },\n            {\n                name: 'negative_price_charging',\n                priority: 2,\n                condition: function (ctx) { return ctx.price.is_negative && !ctx.battery.is_full; },\n                action: function (ctx) {\n                    return {\n                        mode: 'Force Charge',\n                        discharge: 0,\n                        immersion: ctx.price.current < config.thresholds.price.immersion_trigger,\n                        reason: 'Negative price → maximum charging'\n                    };\n                },\n                description: 'Charge battery during negative pricing'\n            },\n            {\n                name: 'cheap_price_immediate_negative_wait',\n                priority: 3,\n                condition: function (ctx) { return ctx.price.is_cheap && ctx.battery.is_high && ctx.market.immediate_negative; },\n                action: {\n                    mode: 'Self Use',\n                    discharge: 20,\n                    immersion: false,\n                    reason: 'Cheap price but waiting for immediate negative'\n                },\n                description: 'Wait for better negative price when immediate negative period coming'\n            },\n            {\n                name: 'cheap_price_charging',\n                priority: 4,\n                condition: function (ctx) { return ctx.price.is_cheap && !ctx.battery.is_high; },\n                action: function (ctx) {\n                    return {\n                    mode: 'Force Charge',\n                    discharge: 0,\n                    immersion: false,\n                    reason: 'Cheap price → force charge'\n                };\n                },\n                description: 'Charge battery during cheap pricing'\n            },\n            {\n                name: 'cheap_price_high_soc',\n                priority: 5,\n                condition: function (ctx) { return ctx.price.is_cheap && ctx.battery.is_high; },\n                action: function (ctx) {\n                    return {\n                    mode: 'Force Charge',\n                    discharge: 0,\n                    immersion: ctx.price.current < config.thresholds.price.immersion_trigger,\n                    reason: 'Cheap price → force charge even at high SoC'\n                };\n                },\n                description: 'Continue charging during cheap periods even when battery high'\n            },\n            {\n                name: 'export_opportunity_sufficient_battery',\n                priority: 6,\n                condition: function (ctx) { return ctx.flags.export_opportunity && ctx.battery.soc > 30; },\n                action: {\n                    mode: 'Feed-in First',\n                    discharge: 50,\n                    immersion: false,\n                    reason: 'High price + high solar → export mode'\n                },\n                description: 'Export during high prices with sufficient battery'\n            },\n            {\n                name: 'export_opportunity_preserve_battery',\n                priority: 7,\n                condition: function (ctx) { return ctx.flags.export_opportunity && ctx.battery.soc <= 30; },\n                action: {\n                    mode: 'Self Use',\n                    discharge: 20,\n                    immersion: false,\n                    reason: 'High price + low battery → preserve for export'\n                },\n                description: 'Preserve battery during export opportunities when SoC low'\n            },\n            {\n                name: 'expensive_price_discharge',\n                priority: 8,\n                condition: function (ctx) { return ctx.price.is_expensive && !ctx.solar.is_high; },\n                action: {\n                    mode: 'Self Use',\n                    discharge: 50,\n                    immersion: false,\n                    reason: 'Expensive price + low solar → battery discharge'\n                },\n                description: 'Use battery during expensive periods with low solar'\n            },\n            {\n                name: 'afternoon_solar_charging',\n                priority: 9,\n                condition: function (ctx) { return ctx.flags.high_solar_afternoon && !ctx.battery.is_high; },\n                action: {\n                    mode: 'Self Use',\n                    discharge: 0,\n                    immersion: false,\n                    reason: 'High afternoon solar → solar charging'\n                },\n                description: 'Charge from solar during high afternoon generation'\n            },\n            {\n                name: 'afternoon_solar_export',\n                priority: 10,\n                condition: function (ctx) { return ctx.flags.high_solar_afternoon && ctx.battery.is_high; },\n                action: function (ctx) {\n                    return {\n                        mode: 'Feed-in First',\n                        discharge: 30,\n                        immersion: ctx.solar.remaining_today > 10,\n                        reason: 'High solar + charged battery → export'\n                    };\n                },\n                description: 'Export excess solar when battery charged'\n            },\n            {\n                name: 'topup_window_charge',\n                priority: 11,\n                condition: function (ctx) { return ctx.time.is_topup_window && !ctx.battery.is_high; },\n                action: {\n                    mode: 'Force Charge',\n                    discharge: 0,\n                    immersion: false,\n                    reason: 'Pre-deadline top-up (15:00-16:00)'\n                },\n                description: 'Top-up charge before 16:00 deadline'\n            },\n            {\n                name: 'evening_discharge',\n                priority: 12,\n                condition: function (ctx) { return ctx.time.is_evening; },\n                action: {\n                    mode: 'Self Use',\n                    discharge: 50,\n                    immersion: false,\n                    reason: 'Evening → strategic discharge'\n                },\n                description: 'Strategic battery discharge during evening hours'\n            },\n            {\n                name: 'low_battery_preserve',\n                priority: 13,\n                condition: function (ctx) { return ctx.battery.is_low; },\n                action: {\n                    mode: 'Self Use',\n                    discharge: 0,\n                    immersion: false,\n                    reason: 'Low battery → preserve charge'\n                },\n                description: 'Preserve battery when SoC is low'\n            },\n            {\n                name: 'default_operation',\n                priority: 99,\n                condition: function (ctx) { return true; }, // Always matches as fallback\n                action: function (ctx) {\n                    return {\n                    mode: 'Self Use',\n                    discharge: 50,\n                    immersion: ctx.price.current < config.thresholds.price.immersion_trigger,\n                    reason: 'Default operation mode'\n                };\n                },\n                description: 'Default operation when no other rules match'\n            }\n        ];\n\n        // Sort rules by priority and evaluate\n        const sortedRules = RULES.sort((a, b) => a.priority - b.priority);\n\n        for (const rule of sortedRules) {\n            try {\n                if (rule.condition(context)) {\n                    // Handle action as function or object\n                    const actionResult = typeof rule.action === 'function' ? rule.action(context) : rule.action;\n\n                    const decision = {\n                        ...actionResult,\n                        rule_name: rule.name,\n                        rule_priority: rule.priority,\n                        rule_description: rule.description,\n                        context: context,\n                        timestamp: new Date().toISOString()\n                    };\n\n                    // Store decision for debugging and other components\n                    flow.set('decision.current', decision);\n                    flow.set('decision.updated', decision.timestamp);\n\n                    node.log(`Rule matched: ${rule.name} (priority ${rule.priority}) → ${decision.reason}`);\n                    node.status({\n                        fill: context.price.is_negative ? 'red' :\n                            context.price.is_expensive ? 'orange' :\n                                context.solar.is_high ? 'green' : 'blue',\n                        shape: 'dot',\n                        text: `${rule.name} | ${decision.mode} | ${decision.discharge}A | ${decision.immersion ? 'IMM' : ''}`\n                    });\n\n                    return {\n                        payload: decision\n                    };\n                }\n            } catch (ruleError) {\n                node.warn(`Error evaluating rule ${rule.name}: ${ruleError.message}`);\n                node.warn(`Context available: ${JSON.stringify(Object.keys(context))}`);\n                if (rule.name === 'afternoon_solar_export') {\n                    node.warn(`Solar context: ${JSON.stringify(context.solar)}`);\n                }\n                continue;\n            }\n        }\n\n        // Should never reach here due to default rule\n        node.error(\"No rules matched - this should not happen\");\n        node.status({\n            fill: 'red',\n            shape: 'ring',\n            text: 'No rules matched'\n        });\n        return null;\n\n    } catch (error) {\n        node.error(\"Rule evaluation error: \" + error.message);\n        node.status({\n            fill: 'red',\n            shape: 'ring',\n            text: 'Rule error'\n        });\n        return null;\n    }\n}\n\n// Execute rule evaluation\nreturn evaluateRules(msg);",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1520,
+        "y": 280,
+        "wires": [
+            [
+                "b4ec7d75cb3d09a1",
+                "7288e63d490b56be"
+            ]
+        ]
+    },
+    {
+        "id": "b4ec7d75cb3d09a1",
+        "type": "function",
+        "z": "6ab2083af5df0d88",
+        "name": "Battery Controller",
+        "func": "// Battery Controller Function Node\n// Manages battery discharge current and mode settings\n\nfunction controlBattery(msg) {\n    try {\n        const config = flow.get('system_config');\n        if (!config) {\n            node.error(\"System configuration not found\");\n            node.status({\n                fill: 'red',\n                shape: 'ring',\n                text: 'No config'\n            });\n            return null;\n        }\n        \n        const decision = msg.payload;\n        if (!decision || typeof decision.discharge === 'undefined' || !decision.mode) {\n            node.error(\"Invalid decision data - missing discharge or mode\");\n            node.status({\n                fill: 'red',\n                shape: 'ring',\n                text: 'Invalid decision'\n            });\n            return null;\n        }\n        \n        // Validate discharge current\n        const dischargeValue = Number(decision.discharge);\n        if (isNaN(dischargeValue) || dischargeValue < 0 || dischargeValue > 100) {\n            node.error(`Invalid discharge current: ${decision.discharge}A`);\n            node.status({\n                fill: 'red',\n                shape: 'ring',\n                text: 'Invalid discharge'\n            });\n            return null;\n        }\n        \n        // Validate mode\n        const validModes = ['Self Use', 'Force Charge', 'Feed-in First'];\n        if (!validModes.includes(decision.mode)) {\n            node.error(`Invalid battery mode: ${decision.mode}`);\n            node.status({\n                fill: 'red',\n                shape: 'ring',\n                text: 'Invalid mode'\n            });\n            return null;\n        }\n        \n        // Prepare discharge current command\n        const dischargeCommand = {\n            payload: {\n                value: dischargeValue\n            },\n            entity_id: config.devices.battery.discharge_entity,\n            decision_context: {\n                rule: decision.rule_name,\n                reason: decision.reason,\n                timestamp: decision.timestamp\n            }\n        };\n        \n        // Prepare mode command (will be sent after delay)\n        const modeCommand = {\n            mode: decision.mode,\n            entity_id: config.devices.battery.mode_entity,\n            decision_context: {\n                rule: decision.rule_name,\n                reason: decision.reason,\n                timestamp: decision.timestamp\n            }\n        };\n        \n        // Store commands for potential rollback\n        flow.set('battery.last_discharge_command', dischargeCommand);\n        flow.set('battery.last_mode_command', modeCommand);\n        flow.set('battery.command_timestamp', new Date().toISOString());\n        \n        node.log(`Battery control: ${decision.mode} mode, ${dischargeValue}A discharge (${decision.reason})`);\n        node.status({\n            fill: 'green',\n            shape: 'dot',\n            text: `${decision.mode} | ${dischargeValue}A | ${decision.rule_name}`\n        });\n        \n        return [\n            dischargeCommand,  // Output 1: Discharge current\n            modeCommand        // Output 2: Mode (after delay)\n        ];\n        \n    } catch (error) {\n        node.error(\"Battery controller error: \" + error.message);\n        node.status({\n            fill: 'red',\n            shape: 'ring',\n            text: 'Controller error'\n        });\n        return null;\n    }\n}\n\n// Execute battery control\nreturn controlBattery(msg);",
+        "outputs": 2,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1790,
+        "y": 280,
+        "wires": [
+            [
+                "b34e582f53121411"
+            ],
+            [
+                "0f6443d5458e0c4f"
+            ]
+        ]
+    },
+    {
+        "id": "b34e582f53121411",
+        "type": "api-call-service",
+        "z": "6ab2083af5df0d88",
+        "name": "Set Discharge",
+        "server": "2f5e82bb.678dde",
+        "version": 7,
+        "debugenabled": true,
+        "action": "number.set_value",
+        "floorId": [],
+        "areaId": [],
+        "deviceId": [],
+        "entityId": [
+            "number.foxinverter_max_discharge_current"
+        ],
+        "labelId": [],
+        "data": "{\"value\":payload.value}",
+        "dataType": "jsonata",
+        "mergeContext": "",
+        "mustacheAltTags": false,
+        "outputProperties": [],
+        "queue": "none",
+        "blockInputOverrides": true,
+        "domain": "number",
+        "service": "set_value",
+        "x": 2020,
+        "y": 240,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "0f6443d5458e0c4f",
+        "type": "delay",
+        "z": "6ab2083af5df0d88",
+        "name": "2s",
+        "pauseType": "delay",
+        "timeout": "2",
+        "timeoutUnits": "seconds",
+        "rate": "1",
+        "nbRateUnits": "1",
+        "rateUnits": "second",
+        "randomFirst": "1",
+        "randomLast": "5",
+        "randomUnits": "seconds",
+        "drop": false,
+        "allowrate": false,
+        "outputs": 1,
+        "x": 1990,
+        "y": 340,
+        "wires": [
+            [
+                "a9a8bb26ea1585d8"
+            ]
+        ]
+    },
+    {
+        "id": "a9a8bb26ea1585d8",
+        "type": "api-call-service",
+        "z": "6ab2083af5df0d88",
+        "name": "Set Mode",
+        "server": "2f5e82bb.678dde",
+        "version": 7,
+        "debugenabled": true,
+        "action": "select.select_option",
+        "floorId": [],
+        "areaId": [],
+        "deviceId": [],
+        "entityId": [
+            "select.foxinverter_work_mode"
+        ],
+        "labelId": [],
+        "data": "{\"option\":mode}",
+        "dataType": "jsonata",
+        "mergeContext": "",
+        "mustacheAltTags": false,
+        "outputProperties": [],
+        "queue": "none",
+        "blockInputOverrides": true,
+        "domain": "select",
+        "service": "select_option",
+        "x": 2160,
+        "y": 340,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "7288e63d490b56be",
+        "type": "function",
+        "z": "6ab2083af5df0d88",
+        "name": "Dashboard Formatter",
+        "func": "// Dashboard Formatter Function Node\n// Formats decision data for UI display with human-readable explanations\n\nfunction formatDashboard(msg) {\n    try {\n        const decision = flow.get('decision.current');\n        const context = flow.get('decision.context');\n        \n        if (!decision || !context) {\n            node.error(\"No decision or context data available\");\n            node.status({\n                fill: 'red',\n                shape: 'ring',\n                text: 'No decision data'\n            });\n            return null;\n        }\n        \n        // Map technical reasons to user-friendly explanations\n        const reasonMap = {\n            'Negative price + full battery → immersion heating': 'Negative Price + Full Battery → Immersion Heating',\n            'Negative price → maximum charging': 'Negative Price → Maximum Charging',\n            'High price + high solar → export mode': 'High Price + High Solar → Export Mode',\n            'High price + low battery → preserve for export': 'High Price + Low Battery → Preserve for Export',\n            'Expensive price + low solar → battery discharge': 'Expensive Price → Battery Discharge',\n            'Cheap price but waiting for immediate negative': 'Waiting for Better Negative Price',\n            'High afternoon solar → solar charging': 'High Solar → Solar Charging',\n            'High solar + charged battery → export': 'High Solar + Full → Feed-in Export',\n            'Pre-deadline top-up (15:00-16:00)': 'Pre-deadline Top-up (15:00-16:00)',\n            'Evening → strategic discharge': 'Evening → Strategic Discharge',\n            'Low battery → preserve charge': 'Low Battery → Preserve Charge',\n            'Cheap price → force charge': 'Cheap Price → Moderate Use',\n            'Default operation mode': 'Normal Operation'\n        };\n        \n        const friendlyReason = reasonMap[decision.reason] || decision.reason;\n        \n        // Format price status\n        let priceStatus = 'Normal';\n        if (context.price.is_negative) {\n            priceStatus = `Negative ${context.price.current.toFixed(2)}p`;\n        } else if (context.price.is_expensive) {\n            priceStatus = `Expensive ${context.price.current.toFixed(2)}p`;\n        } else if (context.price.is_cheap) {\n            priceStatus = `Cheap ${context.price.current.toFixed(2)}p`;\n        } else {\n            priceStatus = `${context.price.current.toFixed(2)}p`;\n        }\n        \n        // Format solar status\n        let solarStatus = 'Normal';\n        if (context.solar.is_high) {\n            solarStatus = `High Solar ${context.solar.current.toFixed(1)}kW | ${context.solar.next_hour.toFixed(1)}kW next`;\n        } else if (context.solar.is_low) {\n            solarStatus = `Low Solar ${context.solar.current.toFixed(1)}kW | ${context.solar.next_hour.toFixed(1)}kW next`;\n        } else {\n            solarStatus = `Solar ${context.solar.current.toFixed(1)}kW | ${context.solar.next_hour.toFixed(1)}kW next`;\n        }\n        \n        // Format battery status\n        let batteryStatus = 'Normal';\n        if (context.battery.is_full) {\n            batteryStatus = `Near Full ${context.battery.soc}%`;\n        } else if (context.battery.is_low) {\n            batteryStatus = `Needs Charge ${context.battery.soc}%`;\n        } else {\n            batteryStatus = `${context.battery.soc}%`;\n        }\n        \n        // Format time context\n        let timeContext = 'Normal';\n        if (context.time.is_afternoon) timeContext = 'Afternoon';\n        if (context.time.is_evening) timeContext = 'Evening';\n        if (context.time.is_night) timeContext = 'Night';\n        if (context.time.is_topup_window) timeContext += ' [TOPUP]';\n        if (context.flags.export_opportunity) timeContext += ' [EXPORT]';\n        \n        // Generate logic flow explanation\n        let logicFlow = '';\n        if (context.price.is_negative && !context.battery.is_full) {\n            logicFlow = 'IF: Price < 0p AND Battery < 95% → THEN: Force Charge Mode';\n        } else if (context.price.is_negative && context.battery.is_full) {\n            logicFlow = 'IF: Price < 0p AND Battery Full → THEN: Immersion Heating';\n        } else if (context.flags.export_opportunity) {\n            logicFlow = 'IF: Price > 20p AND Solar > 5kW → THEN: Export Mode';\n        } else if (context.price.is_expensive && !context.solar.is_high) {\n            logicFlow = 'IF: Price Expensive AND Solar Low → THEN: Battery Discharge';\n        } else if (context.flags.high_solar_afternoon) {\n            logicFlow = 'IF: High Solar AND Afternoon → THEN: Solar Priority';\n        } else if (context.market.negative_periods_remaining > 0 && context.battery.soc > 40) {\n            logicFlow = `IF: ${context.market.negative_periods_remaining} Negative Periods Remain → THEN: Wait for Better Price`;\n        } else {\n            logicFlow = 'Standard Operation Mode';\n        }\n        \n        // Generate context flags\n        const flags = [];\n        if (context.time.is_afternoon) flags.push('AFTERNOON');\n        if (context.time.is_evening) flags.push('EVENING');\n        if (context.time.is_night) flags.push('NIGHT');\n        if (context.flags.export_opportunity) flags.push('EXPORT_WORTHY');\n        if (context.solar.is_high) flags.push('HIGH_SOLAR');\n        if (context.price.is_negative) flags.push('NEGATIVE_PRICE');\n        if (context.battery.is_low) flags.push('LOW_BATTERY');\n        if (context.battery.is_full) flags.push('FULL_BATTERY');\n        \n        // Calculate next evaluation time\n        const nextEval = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes from now\n        \n        // Format current time\n        const currentTime = new Date().toLocaleTimeString();\n        \n        node.log(`Dashboard formatted: ${decision.rule_name} → ${friendlyReason}`);\n        node.status({\n            fill: 'green',\n            shape: 'dot',\n            text: `Dashboard updated - ${currentTime}`\n        });\n        \n        // Return array of messages for different UI components\n        return [\n            { topic: 'strategy', payload: friendlyReason },                    // Output 1: Current Strategy\n            { topic: 'price_status', payload: priceStatus },                   // Output 2: Price Status\n            { topic: 'solar_status', payload: solarStatus },                   // Output 3: Solar Status\n            { topic: 'battery_status', payload: batteryStatus },               // Output 4: Battery Status\n            { topic: 'time_context', payload: timeContext },                   // Output 5: Time Context\n            { topic: 'logic_flow', payload: logicFlow },                       // Output 6: Logic Flow\n            { topic: 'last_update', payload: currentTime },                    // Output 7: Last Update\n            { topic: 'context_flags', payload: flags.join(' ') },             // Output 8: Context Flags\n            { topic: 'next_eval', payload: `Next: ${nextEval.toLocaleTimeString()}` }, // Output 9: Next Eval\n            { \n                topic: 'debug_info', \n                payload: {\n                    rule: decision.rule_name,\n                    priority: decision.rule_priority,\n                    mode: decision.mode,\n                    discharge: decision.discharge,\n                    immersion: decision.immersion,\n                    context_summary: {\n                        soc: context.battery.soc,\n                        solar_now: context.solar.current,\n                        solar_next: context.solar.next_hour,\n                        price: context.price.current,\n                        classification: context.price.classification,\n                        negative_remaining: context.market.negative_periods_remaining\n                    }\n                }\n            }  // Output 10: Debug Info\n        ];\n        \n    } catch (error) {\n        node.error(\"Dashboard formatter error: \" + error.message);\n        node.status({\n            fill: 'red',\n            shape: 'ring',\n            text: 'Formatter error'\n        });\n        return null;\n    }\n}\n\n// Execute dashboard formatting\nreturn formatDashboard(msg);",
+        "outputs": 10,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1540,
+        "y": 700,
+        "wires": [
+            [
+                "af160cdc432ba4a6"
+            ],
+            [
+                "0c030de2f8db0564"
+            ],
+            [
+                "4e559f048cdd325e"
+            ],
+            [
+                "b706bf7a6613baa7"
+            ],
+            [
+                "c6b16cf1bfe754f0"
+            ],
+            [
+                "f2a1a8bd71025950"
+            ],
+            [
+                "7486c7a6ec0bb818"
+            ],
+            [
+                "b21032d7c0c88241"
+            ],
+            [
+                "74808c2bc3e3d54a"
+            ],
+            []
+        ]
+    },
+    {
+        "id": "af160cdc432ba4a6",
+        "type": "ui_text",
+        "z": "6ab2083af5df0d88",
+        "group": "a074ca6ea080e529",
+        "order": 1,
+        "width": 12,
+        "height": 2,
+        "name": "Current Strategy",
+        "label": "Current Strategy",
+        "format": "{{msg.payload}}",
+        "layout": "col-center",
+        "className": "strategy-display",
+        "x": 1820,
+        "y": 540,
+        "wires": []
+    },
+    {
+        "id": "0c030de2f8db0564",
+        "type": "ui_text",
+        "z": "6ab2083af5df0d88",
+        "group": "a074ca6ea080e529",
+        "order": 2,
+        "width": 3,
+        "height": 1,
+        "name": "Price Status",
+        "label": "Price",
+        "format": "{{msg.payload}}",
+        "layout": "row-left",
+        "className": "",
+        "x": 1810,
+        "y": 580,
+        "wires": []
+    },
+    {
+        "id": "4e559f048cdd325e",
+        "type": "ui_text",
+        "z": "6ab2083af5df0d88",
+        "group": "a074ca6ea080e529",
+        "order": 3,
+        "width": 3,
+        "height": 1,
+        "name": "Solar Status",
+        "label": "Solar",
+        "format": "{{msg.payload}}",
+        "layout": "row-left",
+        "className": "",
+        "x": 1810,
+        "y": 620,
+        "wires": []
+    },
+    {
+        "id": "b706bf7a6613baa7",
+        "type": "ui_text",
+        "z": "6ab2083af5df0d88",
+        "group": "a074ca6ea080e529",
+        "order": 4,
+        "width": 3,
+        "height": 1,
+        "name": "Battery Status",
+        "label": "Battery",
+        "format": "{{msg.payload}}",
+        "layout": "row-left",
+        "className": "",
+        "x": 1820,
+        "y": 660,
+        "wires": []
+    },
+    {
+        "id": "c6b16cf1bfe754f0",
+        "type": "ui_text",
+        "z": "6ab2083af5df0d88",
+        "group": "a074ca6ea080e529",
+        "order": 5,
+        "width": 3,
+        "height": 1,
+        "name": "Time Context",
+        "label": "Context",
+        "format": "{{msg.payload}}",
+        "layout": "row-left",
+        "className": "",
+        "x": 1810,
+        "y": 700,
+        "wires": []
+    },
+    {
+        "id": "f2a1a8bd71025950",
+        "type": "ui_text",
+        "z": "6ab2083af5df0d88",
+        "group": "09b55b2c3b82ea08",
+        "order": 1,
+        "width": 12,
+        "height": 2,
+        "name": "Logic Flow",
+        "label": "Decision Logic",
+        "format": "{{msg.payload}}",
+        "layout": "col-center",
+        "className": "logic-display",
+        "x": 1810,
+        "y": 740,
+        "wires": []
+    },
+    {
+        "id": "7486c7a6ec0bb818",
+        "type": "ui_text",
+        "z": "6ab2083af5df0d88",
+        "group": "09b55b2c3b82ea08",
+        "order": 2,
+        "width": 4,
+        "height": 1,
+        "name": "Last Update",
+        "label": "Updated",
+        "format": "{{msg.payload}}",
+        "layout": "row-left",
+        "className": "",
+        "x": 1810,
+        "y": 780,
+        "wires": []
+    },
+    {
+        "id": "b21032d7c0c88241",
+        "type": "ui_text",
+        "z": "6ab2083af5df0d88",
+        "group": "09b55b2c3b82ea08",
+        "order": 3,
+        "width": 4,
+        "height": 1,
+        "name": "Context Flags",
+        "label": "Flags",
+        "format": "{{msg.payload}}",
+        "layout": "row-left",
+        "className": "",
+        "x": 1820,
+        "y": 820,
+        "wires": []
+    },
+    {
+        "id": "74808c2bc3e3d54a",
+        "type": "ui_text",
+        "z": "6ab2083af5df0d88",
+        "group": "09b55b2c3b82ea08",
+        "order": 4,
+        "width": 4,
+        "height": 1,
+        "name": "Next Eval",
+        "label": "Next",
+        "format": "{{msg.payload}}",
+        "layout": "row-left",
+        "className": "",
+        "x": 1800,
+        "y": 860,
+        "wires": []
+    },
+    {
+        "id": "383e089862fe8781",
+        "type": "function",
+        "z": "6ab2083af5df0d88",
+        "name": "Price for Export",
+        "func": "// Simplified InfluxDB Price Formatter Function Node\n// Formats classified price data for InfluxDB batch insertion\n\nfunction formatForInfluxDB(msg) {\n    try {\n        const classifiedPrices = msg.payload;\n        const classificationStats = msg.classification_stats;\n        const analysis = msg.analysis;\n\n        if (!Array.isArray(classifiedPrices)) {\n            node.error(\"Classified prices payload is not an array\");\n            node.status({\n                fill: 'red',\n                shape: 'ring',\n                text: 'Invalid data'\n            });\n            return null;\n        }\n\n        // Format individual price records for InfluxDB\n        const influxPoints = [];\n        const today = new Date().toISOString().split('T')[0];\n\n        classifiedPrices.forEach((priceData, index) => {\n            try {\n                // Skip error classifications\n                if (priceData.classification === 'error') {\n                    node.warn(`Skipping error classification at index ${index}`);\n                    return;\n                }\n\n                // Validate required fields - use 'from' timestamp instead of 'timestamp'\n                if (!priceData.from || isNaN(new Date(priceData.from).getTime())) {\n                    node.warn(`Invalid timestamp at index ${index}, skipping`);\n                    return;\n                }\n\n                if (typeof priceData.price !== 'number') {\n                    node.warn(`Invalid price at index ${index}, skipping`);\n                    return;\n                }\n\n                // Validate numeric fields\n                const pricePence = typeof priceData.price === 'number' && !isNaN(priceData.price) ? priceData.price : null;\n                const pricePounds = pricePence !== null ? pricePence / 100 : null;\n                const hour = typeof priceData.hour === 'number' && !isNaN(priceData.hour) ? priceData.hour : null;\n\n                // Skip if critical numeric data is invalid\n                if (pricePence === null || hour === null) {\n                    node.warn(`Skipping price point at index ${index} - invalid price (${priceData.price}) or hour (${priceData.hour})`);\n                    return;\n                }\n\n                // Create InfluxDB point for individual price\n                const pricePoint = {\n                    measurement: 'electricity_prices',\n                    tags: {\n                        classification: priceData.classification,\n                        is_negative: priceData.price < 0 ? 'true' : 'false',\n                        date: today\n                    },\n                    fields: {\n                        price_pence: pricePence,\n                        price_pounds: pricePounds,\n                        hour: hour\n                    },\n                    timestamp: new Date(priceData.from).getTime() * 1000000 // Convert to nanoseconds\n                };\n\n                // Add threshold data if available from analysis\n                if (analysis && analysis.thresholds) {\n                    if (typeof analysis.thresholds.cheap === 'number' && !isNaN(analysis.thresholds.cheap)) {\n                        pricePoint.fields.threshold_cheap = analysis.thresholds.cheap;\n                    }\n                    if (typeof analysis.thresholds.expensive === 'number' && !isNaN(analysis.thresholds.expensive)) {\n                        pricePoint.fields.threshold_expensive = analysis.thresholds.expensive;\n                    }\n                }\n\n                influxPoints.push(pricePoint);\n\n            } catch (error) {\n                node.warn(`Error formatting price data at index ${index}: ${error.message}`);\n            }\n        });\n\n        // Create summary statistics point\n        if (classificationStats) {\n            const statsPoint = {\n                measurement: 'price_classification_stats',\n                tags: {\n                    data_type: 'summary',\n                    date: today\n                },\n                fields: {\n                    total_prices: classificationStats.total,\n                    negative_count: classificationStats.negative,\n                    cheap_count: classificationStats.cheap,\n                    normal_count: classificationStats.normal,\n                    expensive_count: classificationStats.expensive,\n                    error_count: classificationStats.errors,\n                    negative_percentage: classificationStats.total > 0 ? (classificationStats.negative / classificationStats.total * 100) : 0,\n                    cheap_percentage: classificationStats.total > 0 ? (classificationStats.cheap / classificationStats.total * 100) : 0,\n                    normal_percentage: classificationStats.total > 0 ? (classificationStats.normal / classificationStats.total * 100) : 0,\n                    expensive_percentage: classificationStats.total > 0 ? (classificationStats.expensive / classificationStats.total * 100) : 0\n                },\n                timestamp: Date.now() * 1000000 // Current time in nanoseconds\n            };\n\n            influxPoints.push(statsPoint);\n        }\n\n        // Add daily summary point if analysis is available\n        if (analysis) {\n            const dailySummaryPoint = {\n                measurement: 'daily_price_summary',\n                tags: {\n                    date: today,\n                    data_type: 'daily_summary'\n                },\n                fields: {\n                    min_price: analysis.price_stats.min,\n                    max_price: analysis.price_stats.max,\n                    avg_price: analysis.price_stats.mean,\n                    median_price: analysis.price_stats.median,\n                    threshold_cheap: analysis.thresholds.cheap,\n                    threshold_expensive: analysis.thresholds.expensive,\n                    price_range: analysis.price_stats.max - analysis.price_stats.min,\n                    total_periods: analysis.total_periods,\n                    negative_count: analysis.classifications.negative,\n                    cheap_count: analysis.classifications.cheap,\n                    normal_count: analysis.classifications.normal,\n                    expensive_count: analysis.classifications.expensive\n                },\n                timestamp: new Date(today + 'T12:00:00Z').getTime() * 1000000 // Noon today\n            };\n\n            influxPoints.push(dailySummaryPoint);\n        }\n\n        node.log(`Formatted ${influxPoints.length} points for InfluxDB: ` +\n            `${influxPoints.filter(p => p.measurement === 'electricity_prices').length} price points, ` +\n            `${influxPoints.filter(p => p.measurement === 'price_classification_stats').length} stats points, ` +\n            `${influxPoints.filter(p => p.measurement === 'daily_price_summary').length} daily summary points`);\n\n        node.status({\n            fill: 'green',\n            shape: 'dot',\n            text: `Formatted: ${influxPoints.length} points - ${new Date().toLocaleTimeString()}`\n        });\n\n        // Return formatted data for InfluxDB batch node\n        return {\n            payload: influxPoints,\n            metadata: {\n                ...msg.metadata,\n                influxdb_formatted: true,\n                point_count: influxPoints.length,\n                measurements: ['electricity_prices', 'price_classification_stats', 'daily_price_summary']\n            }\n        };\n\n    } catch (error) {\n        node.error(\"InfluxDB formatter error: \" + error.message);\n        node.status({\n            fill: 'red',\n            shape: 'ring',\n            text: 'Formatter error'\n        });\n        return null;\n    }\n}\n\n// Execute InfluxDB formatting\nreturn formatForInfluxDB(msg);",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1040,
+        "y": 120,
+        "wires": [
+            [
+                "af2a0e066d3f6676"
+            ]
+        ]
+    },
+    {
+        "id": "79d8ee35674a1f3c",
+        "type": "debug",
+        "z": "6ab2083af5df0d88",
+        "name": "debug 3",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "false",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1380,
+        "y": 420,
+        "wires": []
+    },
+    {
+        "id": "context_input",
+        "type": "function",
+        "z": "6ab2083af5df0d88",
+        "name": "Extract Immersion Worthy",
+        "func": "// Parse the incoming context data\nlet context_data;\ntry {\n    if (typeof msg.payload === 'string') {\n        context_data = JSON.parse(msg.payload);\n    } else {\n        context_data = msg.payload;\n    }\n} catch (e) {\n    node.error('Failed to parse context data: ' + e.message);\n    return null;\n}\n\n// Extract immersion_worthy flag\nconst immersion_worthy = context_data.flags?.immersion_opportunity || false;\nconst previous_worthy = flow.get('immersion_worthy_state') || false;\n\n// Only proceed if state changed\nif (immersion_worthy !== previous_worthy) {\n    flow.set('immersion_worthy_state', immersion_worthy);\n    \n    msg.payload = immersion_worthy;\n    msg.topic = 'immersion_worthy_change';\n    \n    return msg;\n}\n\nreturn null; // No change, don't proceed",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 150,
+        "y": 480,
+        "wires": [
+            [
+                "worthy_state_router"
+            ]
+        ]
+    },
+    {
+        "id": "worthy_state_router",
+        "type": "switch",
+        "z": "6ab2083af5df0d88",
+        "name": "Worthy State Router",
+        "property": "payload",
+        "propertyType": "msg",
+        "rules": [
+            {
+                "t": "true"
+            },
+            {
+                "t": "false"
+            }
+        ],
+        "checkall": "true",
+        "repair": false,
+        "outputs": 2,
+        "x": 600,
+        "y": 480,
+        "wires": [
+            [
+                "check_switches_for_on"
+            ],
+            [
+                "check_switches_for_off"
+            ]
+        ]
+    },
+    {
+        "id": "check_switches_for_on",
+        "type": "function",
+        "z": "6ab2083af5df0d88",
+        "name": "Check for ON",
+        "func": "// When immersion_worthy becomes true, check current switch states\n// Only turn ON switches that are currently OFF (not controlled by schedule)\n\n// Get current states of both switches\nconst main_switch_state = global.get('homeassistant.homeAssistant.states[\"switch.immersion_switch\"].state') || 'off';\nconst lucy_switch_state = global.get('homeassistant.homeAssistant.states[\"switch.immersion_lucy_switch\"].state') || 'off';\n\nconst messages = [];\n\n// If main switch is OFF, we can turn it ON (schedule would have it ON if it wanted it)\nif (main_switch_state === 'off') {\n    // Mark that we (worthy logic) turned this switch on\n    flow.set('main_worthy_controlled', true);\n    messages.push({\n        payload: 'ON',\n        topic: 'main_immersion',\n        entity_id: 'switch.immersion_switch',\n        reason: 'immersion_worthy_on'\n    });\n} else {\n    messages.push(null);\n}\n\n// If Lucy switch is OFF, we can turn it ON\nif (lucy_switch_state === 'off') {\n    // Mark that we (worthy logic) turned this switch on\n    flow.set('lucy_worthy_controlled', true);\n    messages.push({\n        payload: 'ON',\n        topic: 'lucy_immersion', \n        entity_id: 'switch.immersion_lucy_switch',\n        reason: 'immersion_worthy_on'\n    });\n} else {\n    messages.push(null);\n}\n\nreturn messages;",
+        "outputs": 2,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 800,
+        "y": 440,
+        "wires": [
+            [
+                "main_switch_on"
+            ],
+            [
+                "lucy_switch_on"
+            ]
+        ]
+    },
+    {
+        "id": "check_switches_for_off",
+        "type": "function",
+        "z": "6ab2083af5df0d88",
+        "name": "Check for OFF",
+        "func": "// When immersion_worthy becomes false, only turn OFF switches that WE turned on\n// Don't interfere with schedule-controlled switches\n\nconst messages = [];\n\n// Check if we turned the main switch on\nif (flow.get('main_worthy_controlled') === true) {\n    flow.set('main_worthy_controlled', false);\n    messages.push({\n        payload: 'OFF',\n        topic: 'main_immersion',\n        entity_id: 'switch.immersion_switch',\n        reason: 'immersion_worthy_off'\n    });\n} else {\n    messages.push(null);\n}\n\n// Check if we turned the Lucy switch on  \nif (flow.get('lucy_worthy_controlled') === true) {\n    flow.set('lucy_worthy_controlled', false);\n    messages.push({\n        payload: 'OFF',\n        topic: 'lucy_immersion',\n        entity_id: 'switch.immersion_lucy_switch', \n        reason: 'immersion_worthy_off'\n    });\n} else {\n    messages.push(null);\n}\n\nreturn messages;",
+        "outputs": 2,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 800,
+        "y": 520,
+        "wires": [
+            [
+                "main_switch_off"
+            ],
+            [
+                "lucy_switch_off"
+            ]
+        ]
+    },
+    {
+        "id": "main_switch_on",
+        "type": "api-call-service",
+        "z": "6ab2083af5df0d88",
+        "name": "Main Switch ON",
+        "server": "2f5e82bb.678dde",
+        "version": 7,
+        "debugenabled": true,
+        "action": "switch.turn_on",
+        "entityId": [
+            "switch.immersion_switch"
+        ],
+        "data": "",
+        "dataType": "jsonata",
+        "x": 1040,
+        "y": 380,
+        "wires": [
+            [
+                "log_action"
+            ]
+        ]
+    },
+    {
+        "id": "lucy_switch_on",
+        "type": "api-call-service",
+        "z": "6ab2083af5df0d88",
+        "name": "Lucy Switch ON",
+        "server": "2f5e82bb.678dde",
+        "version": 7,
+        "debugenabled": true,
+        "action": "switch.turn_on",
+        "entityId": [
+            "switch.immersion_lucy_switch"
+        ],
+        "data": "",
+        "dataType": "jsonata",
+        "x": 1040,
+        "y": 440,
+        "wires": [
+            [
+                "log_action"
+            ]
+        ]
+    },
+    {
+        "id": "main_switch_off",
+        "type": "api-call-service",
+        "z": "6ab2083af5df0d88",
+        "name": "Main Switch OFF",
+        "server": "2f5e82bb.678dde",
+        "version": 7,
+        "debugenabled": true,
+        "action": "switch.turn_off",
+        "floorId": [],
+        "areaId": [],
+        "deviceId": [],
+        "entityId": [
+            "switch.immersion_switch"
+        ],
+        "labelId": [],
+        "data": "",
+        "dataType": "jsonata",
+        "mergeContext": "",
+        "mustacheAltTags": false,
+        "outputProperties": [],
+        "blockInputOverrides": false,
+        "domain": "switch",
+        "service": "turn_off",
+        "x": 1050,
+        "y": 520,
+        "wires": [
+            [
+                "log_action"
+            ]
+        ]
+    },
+    {
+        "id": "lucy_switch_off",
+        "type": "api-call-service",
+        "z": "6ab2083af5df0d88",
+        "name": "Lucy Switch OFF",
+        "server": "2f5e82bb.678dde",
+        "version": 7,
+        "debugenabled": true,
+        "action": "switch.turn_off",
+        "entityId": [
+            "switch.immersion_lucy_switch"
+        ],
+        "data": "",
+        "dataType": "jsonata",
+        "x": 1050,
+        "y": 580,
+        "wires": [
+            [
+                "log_action"
+            ]
+        ]
+    },
+    {
+        "id": "log_action",
+        "type": "debug",
+        "z": "6ab2083af5df0d88",
+        "name": "Log Immersion Action",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "true",
+        "targetType": "full",
+        "x": 1420,
+        "y": 480,
+        "wires": []
+    },
+    {
+        "id": "reset_control_flags",
+        "type": "inject",
+        "z": "6ab2083af5df0d88",
+        "name": "Reset Control Flags",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": true,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "reset",
+        "payloadType": "str",
+        "x": 160,
+        "y": 560,
+        "wires": [
+            [
+                "reset_function"
+            ]
+        ]
+    },
+    {
+        "id": "reset_function",
+        "type": "function",
+        "z": "6ab2083af5df0d88",
+        "name": "Reset Function",
+        "func": "// Reset all control flags on startup\nflow.set('immersion_worthy_state', false);\nflow.set('main_worthy_controlled', false);\nflow.set('lucy_worthy_controlled', false);\n\nnode.warn('Immersion worthy control flags reset');\nreturn null;",
+        "outputs": 1,
+        "x": 580,
+        "y": 560,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "01799f774790daf6",
+        "type": "influxdb",
+        "hostname": "127.0.0.1",
+        "port": 8086,
+        "protocol": "http",
+        "database": "database",
+        "name": "Influx",
+        "usetls": false,
+        "tls": "",
+        "influxdbVersion": "2.0",
+        "url": "http://192.168.1.64:8086",
+        "timeout": 10,
+        "rejectUnauthorized": true
+    },
+    {
+        "id": "2f5e82bb.678dde",
+        "type": "server",
+        "name": "Home Assistant",
+        "addon": true,
+        "rejectUnauthorizedCerts": true,
+        "ha_boolean": "",
+        "connectionDelay": false,
+        "cacheJson": false,
+        "heartbeat": false,
+        "heartbeatInterval": "",
+        "areaSelector": "friendlyName",
+        "deviceSelector": "friendlyName",
+        "entitySelector": "friendlyName",
+        "statusSeparator": ",",
+        "statusTimeFormat": "h:m:s",
+        "enableGlobalContextStore": true
+    },
+    {
+        "id": "a074ca6ea080e529",
+        "type": "ui_group",
+        "name": "Decision Context",
+        "tab": "9a5d034df78377f4",
+        "order": 1,
+        "disp": true,
+        "width": 12,
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "09b55b2c3b82ea08",
+        "type": "ui_group",
+        "name": "Real-time Reasoning",
+        "tab": "9a5d034df78377f4",
+        "order": 2,
+        "disp": true,
+        "width": 12,
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "9a5d034df78377f4",
+        "type": "ui_tab",
+        "name": "Battery Control",
+        "icon": "dashboard",
+        "order": 1,
+        "disabled": false,
+        "hidden": false
+    },
+    {
+        "id": "bf33eceb8ea772f0",
+        "type": "global-config",
+        "env": [],
+        "modules": {
+            "@buglss/node-red-crontinject": "3.0.2",
+            "node-red-contrib-influxdb": "0.7.0",
+            "node-red-contrib-home-assistant-websocket": "0.80.3",
+            "node-red-dashboard": "3.6.6"
+        }
+    }
+]

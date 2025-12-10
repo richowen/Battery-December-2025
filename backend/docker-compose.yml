@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  battery-optimizer:
+    build: .
+    container_name: battery-optimizer
+    restart: unless-stopped
+    networks:
+      br0:
+        ipv4_address: 192.168.1.60
+    
+    env_file:
+      - .env
+    
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    
+    environment:
+      - HOST_IP=192.168.1.60
+    
+    ports:
+      - "8000:8000"  # Add any other ports your app needs
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://192.168.1.60:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+networks:
+  br0:
+    external: true
+    name: br0

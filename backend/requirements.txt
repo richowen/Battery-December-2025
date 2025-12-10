@@ -1,0 +1,34 @@
+# Core Framework
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+pydantic==2.5.3
+pydantic-settings==2.1.0
+
+# Database
+sqlalchemy==2.0.25
+pymysql==1.1.0
+alembic==1.13.1
+
+# Optimization
+pulp==2.7.0
+numpy==1.26.3
+scipy==1.11.4
+
+# HTTP & API Clients
+httpx==0.26.0
+aiohttp==3.9.1
+
+# Utilities
+python-dotenv==1.0.0
+python-dateutil==2.8.2
+pytz==2023.3
+
+# Logging & Monitoring
+structlog==24.1.0
+
+# InfluxDB (optional)
+influxdb-client==1.38.0
+
+# Testing (optional - not needed for production)
+# pytest==7.4.4
+# pytest-asyncio==0.23.3
