@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import desc, and_
 
 from app.database import get_db
-from app.models import ElectricityPrice, OptimizationResult, SystemState, PriceAnalysis, ScheduleOverride
+from app.models import ElectricityPrice, OptimizationResult, SystemState, PriceAnalysis, ScheduleOverride, ManualOverride
 from app.optimizer import BatteryOptimizer
 from app.services.home_assistant import HomeAssistantClient
 from app.services.octopus_energy import OctopusEnergyClient
@@ -34,11 +34,12 @@ class RecommendationResponse(BaseModel):
     discharge_current: int = Field(..., description="Discharge current in amps")
     immersion_main: bool = Field(False, description="Main immersion heater on/off")
     immersion_lucy: bool = Field(False, description="Lucy immersion heater on/off")
-    immersion_main_source: str = Field("optimizer", description="Source: 'schedule_override' or 'optimizer'")
-    immersion_lucy_source: str = Field("optimizer", description="Source: 'schedule_override' or 'optimizer'")
+    immersion_main_source: str = Field("optimizer", description="Source: 'manual_override', 'schedule_override', or 'optimizer'")
+    immersion_lucy_source: str = Field("optimizer", description="Source: 'manual_override', 'schedule_override', or 'optimizer'")
     immersion_main_reason: str = Field("", description="Specific reason for main immersion state")
     immersion_lucy_reason: str = Field("", description="Specific reason for lucy immersion state")
     schedule_override_active: bool = Field(False, description="True if any schedule is active")
+    manual_override_active: bool = Field(False, description="True if any manual override is active")
     reason: str = Field(..., description="Human-readable reason for recommendation")
     timestamp: str
     optimization_status: str = Field(..., description="optimal, feasible, infeasible, error, fallback")
@@ -86,6 +87,30 @@ class ScheduleHistoryItem(BaseModel):
     activated_at: Optional[str]
     deactivated_at: Optional[str]
     duration_minutes: Optional[int]
+
+
+class ManualOverrideRequest(BaseModel):
+    """Manual override request"""
+    immersion_name: str = Field(..., description="'main' or 'lucy'")
+    desired_state: bool = Field(..., description="True=ON, False=OFF")
+    source: str = Field(default="user", description="Source of override")
+    duration_hours: float = Field(default=2.0, description="Duration in hours")
+
+
+class ManualOverrideStatus(BaseModel):
+    """Manual override status for one immersion"""
+    is_active: bool
+    desired_state: Optional[bool] = None
+    expires_at: Optional[str] = None
+    time_remaining_minutes: int = 0
+    source: Optional[str] = None
+
+
+class ManualOverrideStatusResponse(BaseModel):
+    """Complete manual override status"""
+    status: str
+    overrides: Dict[str, ManualOverrideStatus]
+    any_active: bool
 
 
 class SystemStateResponse(BaseModel):
@@ -177,13 +202,37 @@ async def get_current_recommendation(db: Session = Depends(get_db)):
             # If schedule query fails, continue without schedule override
             logger.warning(f"Failed to query schedule status: {e}")
         
-        # Run optimization with schedule status
+        # Query manual override status
+        manual_override_dict = {}
+        try:
+            for immersion_name in ['main', 'lucy']:
+                active_override = db.query(ManualOverride).filter(
+                    and_(
+                        ManualOverride.immersion_name == immersion_name,
+                        ManualOverride.is_active == True,
+                        ManualOverride.expires_at > now
+                    )
+                ).order_by(desc(ManualOverride.created_at)).first()
+                
+                if active_override:
+                    time_remaining = int((active_override.expires_at - now).total_seconds() / 60)
+                    manual_override_dict[immersion_name] = {
+                        'is_active': True,
+                        'desired_state': active_override.desired_state,
+                        'time_remaining_minutes': max(0, time_remaining)
+                    }
+        except Exception as e:
+            # If manual override query fails, continue without it
+            logger.warning(f"Failed to query manual override status: {e}")
+        
+        # Run optimization with schedule and manual override status
         result = optimizer.optimize_schedule(
             current_soc=current_soc,
             prices=prices,
             solar_forecast=solar_forecast,
             horizon_hours=24,
-            schedule_status=schedule_status_dict
+            schedule_status=schedule_status_dict,
+            manual_override_status=manual_override_dict
         )
         
         recommendation = result["current_recommendation"]
@@ -221,6 +270,7 @@ async def get_current_recommendation(db: Session = Depends(get_db)):
             immersion_main_reason=recommendation.get("immersion_main_reason", recommendation["reason"]),
             immersion_lucy_reason=recommendation.get("immersion_lucy_reason", recommendation["reason"]),
             schedule_override_active=recommendation.get("schedule_override_active", False),
+            manual_override_active=recommendation.get("manual_override_active", False),
             reason=recommendation["reason"],
             timestamp=now.isoformat(),
             optimization_status=result["status"],
@@ -667,4 +717,211 @@ async def get_schedule_history(
         raise
     except Exception as e:
         logger.error(f"Error getting schedule history: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Manual Override Endpoints
+
+@router.post("/manual-override/set")
+async def set_manual_override(
+    request: ManualOverrideRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Set manual override for immersion heater
+    
+    Called by Node-RED state monitor when user manually toggles switch
+    """
+    try:
+        immersion_name = request.immersion_name.lower()
+        if immersion_name not in ['main', 'lucy']:
+            raise HTTPException(
+                status_code=400,
+                detail="immersion_name must be 'main' or 'lucy'"
+            )
+        
+        now = datetime.now()
+        expires_at = now + timedelta(hours=request.duration_hours)
+        
+        # Deactivate any existing active override for this immersion
+        active_overrides = db.query(ManualOverride).filter(
+            and_(
+                ManualOverride.immersion_name == immersion_name,
+                ManualOverride.is_active == True
+            )
+        ).all()
+        
+        for override in active_overrides:
+            override.is_active = False
+            override.cleared_at = now
+            override.cleared_by = 'system_replaced'
+        
+        # Create new override
+        new_override = ManualOverride(
+            immersion_name=immersion_name,
+            is_active=True,
+            desired_state=request.desired_state,
+            source=request.source,
+            expires_at=expires_at
+        )
+        db.add(new_override)
+        db.commit()
+        db.refresh(new_override)
+        
+        logger.info(
+            f"Manual override set: {immersion_name} = "
+            f"{'ON' if request.desired_state else 'OFF'} "
+            f"(expires in {request.duration_hours}h)"
+        )
+        
+        return {
+            "status": "success",
+            "message": f"Manual override set for '{immersion_name}' immersion",
+            "override_id": new_override.id,
+            "expires_at": expires_at.isoformat(),
+            "current_state": request.desired_state
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error setting manual override: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/manual-override/status", response_model=ManualOverrideStatusResponse)
+async def get_manual_override_status(db: Session = Depends(get_db)):
+    """
+    Get current manual override status for all immersions
+    
+    Called by optimizer to check if manual override is active
+    """
+    try:
+        now = datetime.now()
+        overrides = {}
+        
+        for immersion_name in ['main', 'lucy']:
+            # Get most recent active override that hasn't expired
+            active_override = db.query(ManualOverride).filter(
+                and_(
+                    ManualOverride.immersion_name == immersion_name,
+                    ManualOverride.is_active == True,
+                    ManualOverride.expires_at > now
+                )
+            ).order_by(desc(ManualOverride.created_at)).first()
+            
+            if active_override:
+                time_remaining = int((active_override.expires_at - now).total_seconds() / 60)
+                overrides[immersion_name] = ManualOverrideStatus(
+                    is_active=True,
+                    desired_state=active_override.desired_state,
+                    expires_at=active_override.expires_at.isoformat(),
+                    time_remaining_minutes=max(0, time_remaining),
+                    source=active_override.source
+                )
+            else:
+                overrides[immersion_name] = ManualOverrideStatus(
+                    is_active=False,
+                    desired_state=None,
+                    expires_at=None,
+                    time_remaining_minutes=0,
+                    source=None
+                )
+        
+        any_active = any(o.is_active for o in overrides.values())
+        
+        return ManualOverrideStatusResponse(
+            status="success",
+            overrides=overrides,
+            any_active=any_active
+        )
+    
+    except Exception as e:
+        logger.error(f"Error getting manual override status: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/manual-override/clear")
+async def clear_manual_override(
+    immersion_name: str,
+    cleared_by: str = "user",
+    db: Session = Depends(get_db)
+):
+    """
+    Clear manual override for specified immersion
+    
+    Called when user clicks "Resume Auto" button or override expires
+    """
+    try:
+        immersion_name = immersion_name.lower()
+        if immersion_name not in ['main', 'lucy']:
+            raise HTTPException(
+                status_code=400,
+                detail="immersion_name must be 'main' or 'lucy'"
+            )
+        
+        now = datetime.now()
+        
+        active_overrides = db.query(ManualOverride).filter(
+            and_(
+                ManualOverride.immersion_name == immersion_name,
+                ManualOverride.is_active == True
+            )
+        ).all()
+        
+        cleared_count = 0
+        for override in active_overrides:
+            override.is_active = False
+            override.cleared_at = now
+            override.cleared_by = cleared_by
+            cleared_count += 1
+        
+        db.commit()
+        
+        logger.info(f"Manual override cleared for '{immersion_name}' by {cleared_by}")
+        
+        return {
+            "status": "success",
+            "message": f"Manual override cleared for '{immersion_name}' immersion",
+            "cleared_count": cleared_count,
+            "system_resuming_control": True
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error clearing manual override: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/manual-override/clear-all")
+async def clear_all_manual_overrides(
+    cleared_by: str = "user",
+    db: Session = Depends(get_db)
+):
+    """Clear all active manual overrides"""
+    try:
+        now = datetime.now()
+        
+        active_overrides = db.query(ManualOverride).filter(
+            ManualOverride.is_active == True
+        ).all()
+        
+        for override in active_overrides:
+            override.is_active = False
+            override.cleared_at = now
+            override.cleared_by = cleared_by
+        
+        db.commit()
+        
+        logger.info(f"All manual overrides cleared by {cleared_by} ({len(active_overrides)} total)")
+        
+        return {
+            "status": "success",
+            "cleared_count": len(active_overrides),
+            "message": f"All manual overrides cleared"
+        }
+    
+    except Exception as e:
+        logger.error(f"Error clearing all manual overrides: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

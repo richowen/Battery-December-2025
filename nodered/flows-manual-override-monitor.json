@@ -1,0 +1,351 @@
+[
+    {
+        "id": "manual_override_tab",
+        "type": "tab",
+        "label": "Manual Override Monitor",
+        "disabled": false,
+        "info": "Monitors immersion switch state changes and detects manual overrides"
+    },
+    {
+        "id": "state_main_immersion",
+        "type": "server-state-changed",
+        "z": "manual_override_tab",
+        "name": "Main Immersion State",
+        "server": "ha_server",
+        "version": 4,
+        "exposeToHomeAssistant": false,
+        "haConfig": [
+            {
+                "property": "name",
+                "value": ""
+            },
+            {
+                "property": "icon",
+                "value": ""
+            }
+        ],
+        "entityidfilter": "switch.immersion_switch",
+        "entityidfiltertype": "exact",
+        "outputinitially": false,
+        "state_type": "str",
+        "haltifstate": "",
+        "halt_if_type": "str",
+        "halt_if_compare": "is",
+        "outputs": 1,
+        "output_only_on_state_change": true,
+        "for": "0",
+        "forType": "num",
+        "forUnits": "minutes",
+        "ignorePrevStateNull": false,
+        "ignorePrevStateUnknown": false,
+        "ignorePrevStateUnavailable": false,
+        "ignoreCurrentStateUnknown": false,
+        "ignoreCurrentStateUnavailable": false,
+        "outputProperties": [
+            {
+                "property": "payload",
+                "propertyType": "msg",
+                "value": "",
+                "valueType": "entityState"
+            },
+            {
+                "property": "data",
+                "propertyType": "msg",
+                "value": "",
+                "valueType": "eventData"
+            },
+            {
+                "property": "topic",
+                "propertyType": "msg",
+                "value": "",
+                "valueType": "triggerId"
+            }
+        ],
+        "x": 170,
+        "y": 100,
+        "wires": [
+            ["detect_manual_change_main"]
+        ]
+    },
+    {
+        "id": "state_lucy_immersion",
+        "type": "server-state-changed",
+        "z": "manual_override_tab",
+        "name": "Lucy Immersion State",
+        "server": "ha_server",
+        "version": 4,
+        "exposeToHomeAssistant": false,
+        "haConfig": [
+            {
+                "property": "name",
+                "value": ""
+            },
+            {
+                "property": "icon",
+                "value": ""
+            }
+        ],
+        "entityidfilter": "switch.immersion_lucy_switch",
+        "entityidfiltertype": "exact",
+        "outputinitially": false,
+        "state_type": "str",
+        "haltifstate": "",
+        "halt_if_type": "str",
+        "halt_if_compare": "is",
+        "outputs": 1,
+        "output_only_on_state_change": true,
+        "for": "0",
+        "forType": "num",
+        "forUnits": "minutes",
+        "ignorePrevStateNull": false,
+        "ignorePrevStateUnknown": false,
+        "ignorePrevStateUnavailable": false,
+        "ignoreCurrentStateUnknown": false,
+        "ignoreCurrentStateUnavailable": false,
+        "outputProperties": [
+            {
+                "property": "payload",
+                "propertyType": "msg",
+                "value": "",
+                "valueType": "entityState"
+            },
+            {
+                "property": "data",
+                "propertyType": "msg",
+                "value": "",
+                "valueType": "eventData"
+            },
+            {
+                "property": "topic",
+                "propertyType": "msg",
+                "value": "",
+                "valueType": "triggerId"
+            }
+        ],
+        "x": 170,
+        "y": 180,
+        "wires": [
+            ["detect_manual_change_lucy"]
+        ]
+    },
+    {
+        "id": "detect_manual_change_main",
+        "type": "function",
+        "z": "manual_override_tab",
+        "name": "Detect Manual Change (Main)",
+        "func": "// Get immersion name\nconst immersionName = 'main';\n\n// Get new state\nconst newState = msg.payload === 'on' || msg.payload === true;\n\n// Check last system action timestamp\nconst lastSystemAction = flow.get(`last_system_action_${immersionName}`) || 0;\nconst now = Date.now();\nconst timeSinceSystemAction = now - lastSystemAction;\n\n// If change happened within 10 seconds of system action, it's system-initiated\nif (timeSinceSystemAction < 10000) {\n    node.warn(`System-initiated change detected for ${immersionName}, ignoring (${timeSinceSystemAction}ms ago)`);\n    return null;\n}\n\n// Check if user-initiated (has user_id or context)\nconst userId = msg.data?.context?.user_id;\nconst isUserInitiated = userId !== undefined && userId !== null;\n\nif (!isUserInitiated && timeSinceSystemAction > 10000) {\n    // Could be manual via HA UI or other means - treat as manual if not recent system action\n    node.warn(`Possible manual change for ${immersionName} (no user_id but ${timeSinceSystemAction}ms since system action)`);\n}\n\n// This is a manual user change!\nnode.log(`Manual override detected: ${immersionName} = ${newState ? 'ON' : 'OFF'}`);\n\n// Prepare API call\nmsg.payload = {\n    immersion_name: immersionName,\n    desired_state: newState,\n    source: 'user',\n    duration_hours: 2\n};\n\nmsg.url = 'http://192.168.1.60:8000/api/v1/manual-override/set';\nmsg.method = 'POST';\nmsg.headers = {\n    'Content-Type': 'application/json'\n};\n\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 450,
+        "y": 100,
+        "wires": [
+            ["call_override_api"]
+        ]
+    },
+    {
+        "id": "detect_manual_change_lucy",
+        "type": "function",
+        "z": "manual_override_tab",
+        "name": "Detect Manual Change (Lucy)",
+        "func": "// Get immersion name\nconst immersionName = 'lucy';\n\n// Get new state\nconst newState = msg.payload === 'on' || msg.payload === true;\n\n// Check last system action timestamp\nconst lastSystemAction = flow.get(`last_system_action_${immersionName}`) || 0;\nconst now = Date.now();\nconst timeSinceSystemAction = now - lastSystemAction;\n\n// If change happened within 10 seconds of system action, it's system-initiated\nif (timeSinceSystemAction < 10000) {\n    node.warn(`System-initiated change detected for ${immersionName}, ignoring (${timeSinceSystemAction}ms ago)`);\n    return null;\n}\n\n// Check if user-initiated (has user_id or context)\nconst userId = msg.data?.context?.user_id;\nconst isUserInitiated = userId !== undefined && userId !== null;\n\nif (!isUserInitiated && timeSinceSystemAction > 10000) {\n    // Could be manual via HA UI or other means - treat as manual if not recent system action\n    node.warn(`Possible manual change for ${immersionName} (no user_id but ${timeSinceSystemAction}ms since system action)`);\n}\n\n// This is a manual user change!\nnode.log(`Manual override detected: ${immersionName} = ${newState ? 'ON' : 'OFF'}`);\n\n// Prepare API call\nmsg.payload = {\n    immersion_name: immersionName,\n    desired_state: newState,\n    source: 'user',\n    duration_hours: 2\n};\n\nmsg.url = 'http://192.168.1.60:8000/api/v1/manual-override/set';\nmsg.method = 'POST';\nmsg.headers = {\n    'Content-Type': 'application/json'\n};\n\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 450,
+        "y": 180,
+        "wires": [
+            ["call_override_api"]
+        ]
+    },
+    {
+        "id": "call_override_api",
+        "type": "http request",
+        "z": "manual_override_tab",
+        "name": "Set Manual Override",
+        "method": "POST",
+        "ret": "obj",
+        "paytoqs": "ignore",
+        "url": "",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [],
+        "x": 730,
+        "y": 140,
+        "wires": [
+            ["log_override_result"]
+        ]
+    },
+    {
+        "id": "log_override_result",
+        "type": "function",
+        "z": "manual_override_tab",
+        "name": "Log Result",
+        "func": "if (msg.payload.status === 'success') {\n    const immersion = msg.payload.message.includes('main') ? 'main' : 'lucy';\n    const expiresAt = new Date(msg.payload.expires_at);\n    const timeRemaining = Math.round((expiresAt - new Date()) / 60000);\n    \n    node.status({\n        fill: 'yellow',\n        shape: 'dot',\n        text: `${immersion}: Override set (${timeRemaining}min)`\n    });\n    \n    node.log(\n        `Manual override set: ${immersion} immersion ` +\n        `(expires ${msg.payload.expires_at}, ` +\n        `override_id=${msg.payload.override_id})`\n    );\n} else {\n    node.status({\n        fill: 'red',\n        shape: 'ring',\n        text: 'Failed to set override'\n    });\n    node.error('Manual override API call failed: ' + JSON.stringify(msg.payload));\n}\n\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 930,
+        "y": 140,
+        "wires": [
+            ["debug_override"]
+        ]
+    },
+    {
+        "id": "debug_override",
+        "type": "debug",
+        "z": "manual_override_tab",
+        "name": "Override Debug",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1120,
+        "y": 140,
+        "wires": []
+    },
+    {
+        "id": "inject_test_main_on",
+        "type": "inject",
+        "z": "manual_override_tab",
+        "name": "Test: Main ON",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "{\"immersion_name\":\"main\",\"desired_state\":true,\"source\":\"test\",\"duration_hours\":0.1}",
+        "payloadType": "json",
+        "x": 170,
+        "y": 300,
+        "wires": [
+            ["test_override_call"]
+        ]
+    },
+    {
+        "id": "inject_test_main_off",
+        "type": "inject",
+        "z": "manual_override_tab",
+        "name": "Test: Main OFF",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "{\"immersion_name\":\"main\",\"desired_state\":false,\"source\":\"test\",\"duration_hours\":0.1}",
+        "payloadType": "json",
+        "x": 170,
+        "y": 340,
+        "wires": [
+            ["test_override_call"]
+        ]
+    },
+    {
+        "id": "test_override_call",
+        "type": "http request",
+        "z": "manual_override_tab",
+        "name": "Test Override API",
+        "method": "POST",
+        "ret": "obj",
+        "paytoqs": "ignore",
+        "url": "http://192.168.1.60:8000/api/v1/manual-override/set",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [
+            {
+                "keyType": "other",
+                "keyValue": "Content-Type",
+                "valueType": "other",
+                "valueValue": "application/json"
+            }
+        ],
+        "x": 430,
+        "y": 320,
+        "wires": [
+            ["debug_test_result"]
+        ]
+    },
+    {
+        "id": "debug_test_result",
+        "type": "debug",
+        "z": "manual_override_tab",
+        "name": "Test Result",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 670,
+        "y": 320,
+        "wires": []
+    },
+    {
+        "id": "comment_monitor",
+        "type": "comment",
+        "z": "manual_override_tab",
+        "name": "State Change Monitoring - Detects manual user toggles",
+        "info": "Subscribes to Home Assistant state changes for immersion switches.\nDetects whether changes are manual (user-initiated) or system-initiated.\nCalls API to set manual override when manual changes detected.\n\nDetection Logic:\n- If change within 10s of system action → Ignore (system-initiated)\n- If change has user_id context → Manual\n- If change >10s after system action → Likely manual\n\nOverride Duration: 2 hours (configurable)\nAPI Endpoint: POST /api/v1/manual-override/set",
+        "x": 250,
+        "y": 40,
+        "wires": []
+    },
+    {
+        "id": "comment_testing",
+        "type": "comment",
+        "z": "manual_override_tab",
+        "name": "Testing - Manual override API test buttons",
+        "info": "Use these inject nodes to test manual override functionality:\n- Main ON: Sets 6-minute override (0.1 hours) with main=ON\n- Main OFF: Sets 6-minute override with main=OFF\n\nWatch debug panel for API responses.",
+        "x": 230,
+        "y": 260,
+        "wires": []
+    },
+    {
+        "id": "ha_server",
+        "type": "server",
+        "name": "Home Assistant",
+        "addon": true,
+        "rejectUnauthorizedCerts": true,
+        "ha_boolean": "",
+        "connectionDelay": false,
+        "cacheJson": false,
+        "heartbeat": false,
+        "heartbeatInterval": "",
+        "areaSelector": "friendlyName",
+        "deviceSelector": "friendlyName",
+        "entitySelector": "friendlyName",
+        "statusSeparator": ",",
+        "statusTimeFormat": "h:m:s",
+        "enableGlobalContextStore": true
+    }
+]

@@ -35,7 +35,8 @@ class BatteryOptimizer:
         solar_forecast: List[float],
         load_forecast: Optional[List[float]] = None,
         horizon_hours: int = 24,
-        schedule_status: Optional[Dict] = None
+        schedule_status: Optional[Dict] = None,
+        manual_override_status: Optional[Dict] = None
     ) -> Dict:
         """
         Generate optimal battery schedule
@@ -46,6 +47,8 @@ class BatteryOptimizer:
             solar_forecast: Hourly solar generation forecast (kW)
             load_forecast: Hourly load forecast (kW), defaults to 2kW constant
             horizon_hours: Optimization horizon in hours
+            schedule_status: Schedule override status dict
+            manual_override_status: Manual override status dict
             
         Returns:
             Dict with schedule, current recommendation, and metrics
@@ -178,7 +181,7 @@ class BatteryOptimizer:
                 mode = "Self Use"
                 discharge_current = 20  # Minimal discharge
             
-            # Determine immersion heater status with schedule override support
+            # Determine immersion heater status with 3-tier priority system
             immersion_main = False
             immersion_lucy = False
             immersion_main_source = "optimizer"
@@ -186,23 +189,34 @@ class BatteryOptimizer:
             immersion_main_reason = ""
             immersion_lucy_reason = ""
             schedule_override_active = False
+            manual_override_active = False
             
-            # Check for schedule overrides (passed in via schedule_status parameter)
+            # Initialize status dicts
             if schedule_status is None:
                 schedule_status = {}
-            schedule_main = schedule_status.get('main', {}).get('is_active', False)
-            schedule_lucy = schedule_status.get('lucy', {}).get('is_active', False)
+            if manual_override_status is None:
+                manual_override_status = {}
             
-            # PRIORITY 1: Schedule Override (if active)
-            if schedule_main:
+            current_price = period_prices[0]
+            
+            # === MAIN IMMERSION 3-TIER PRIORITY ===
+            
+            # PRIORITY 1: Manual Override (highest)
+            manual_main = manual_override_status.get('main', {}).get('is_active', False)
+            if manual_main:
+                immersion_main = manual_override_status['main']['desired_state']
+                immersion_main_source = "manual_override"
+                time_left = manual_override_status['main'].get('time_remaining_minutes', 0)
+                immersion_main_reason = f"Manual override active ({time_left}min remaining)"
+                manual_override_active = True
+            # PRIORITY 2: Schedule Override (medium)
+            elif schedule_status.get('main', {}).get('is_active', False):
                 immersion_main = True
                 immersion_main_source = "schedule_override"
                 immersion_main_reason = schedule_status['main'].get('schedule_reason', 'Schedule active')
                 schedule_override_active = True
+            # PRIORITY 3: Optimizer Logic (normal)
             else:
-                # PRIORITY 2: Optimizer Logic (price/SOC based)
-                current_price = period_prices[0]
-                
                 # Turn on main immersion if:
                 # 1. Price is negative AND battery is near full
                 # 2. Price is very cheap (<2p) AND battery is full
@@ -219,16 +233,24 @@ class BatteryOptimizer:
                 else:
                     immersion_main_reason = f"Conditions not met (price: {current_price:.1f}p, SOC: {current_soc:.0f}%)"
             
-            # PRIORITY 1: Schedule Override for Lucy (if active)
-            if schedule_lucy:
+            # === LUCY IMMERSION 3-TIER PRIORITY ===
+            
+            # PRIORITY 1: Manual Override (highest)
+            manual_lucy = manual_override_status.get('lucy', {}).get('is_active', False)
+            if manual_lucy:
+                immersion_lucy = manual_override_status['lucy']['desired_state']
+                immersion_lucy_source = "manual_override"
+                time_left = manual_override_status['lucy'].get('time_remaining_minutes', 0)
+                immersion_lucy_reason = f"Manual override active ({time_left}min remaining)"
+                manual_override_active = True
+            # PRIORITY 2: Schedule Override (medium)
+            elif schedule_status.get('lucy', {}).get('is_active', False):
                 immersion_lucy = True
                 immersion_lucy_source = "schedule_override"
                 immersion_lucy_reason = schedule_status['lucy'].get('schedule_reason', 'Schedule active')
                 schedule_override_active = True
+            # PRIORITY 3: Optimizer Logic (normal)
             else:
-                # PRIORITY 2: Optimizer Logic for Lucy
-                current_price = period_prices[0]
-                
                 # Lucy follows same logic as main
                 if current_price < 0 and current_soc >= 90:
                     immersion_lucy = True
@@ -261,6 +283,7 @@ class BatteryOptimizer:
                     "immersion_main_reason": immersion_main_reason,
                     "immersion_lucy_reason": immersion_lucy_reason,
                     "schedule_override_active": schedule_override_active,
+                    "manual_override_active": manual_override_active,
                     "reason": self._generate_reason(current_action, period_prices[0])
                 },
                 "schedule": schedule[:48],  # Return first 24 hours (48 periods)

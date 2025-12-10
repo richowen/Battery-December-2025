@@ -1,0 +1,80 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>battery-optimizer</Name>
+  <Repository>battery-optimizer:latest</Repository>
+  <Registry>https://hub.docker.com/</Registry>
+  <Network>br0</Network>
+  <MyIP>192.168.1.60</MyIP>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/yourusername/battery-optimizer</Support>
+  <Project>https://github.com/yourusername/battery-optimizer</Project>
+  <Overview>Battery Optimization Service - Optimizes battery charging/discharging based on Octopus Energy pricing, solar forecasts, and Home Assistant integration.</Overview>
+  <Category>HomeAutomation:</Category>
+  <WebUI>http://[IP]:[PORT:8000]</WebUI>
+  <TemplateURL/>
+  <Icon>https://raw.githubusercontent.com/selfhosters/unRAID-CA-templates/master/templates/img/battery.png</Icon>
+  <ExtraParams>--health-cmd="python -c &quot;import requests; requests.get('http://localhost:8000/health')&quot;" --health-interval=30s --health-timeout=10s --health-start-period=40s --health-retries=3</ExtraParams>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled></DateInstalled>
+  <DonateText/>
+  <DonateLink/>
+  <Requires>MySQL/MariaDB database, Home Assistant (optional), InfluxDB (optional)</Requires>
+  <Config Name="WebUI Port" Target="8000" Default="8000" Mode="tcp" Description="API/WebUI Port" Type="Port" Display="always" Required="true" Mask="false">8000</Config>
+  
+  <!-- Volume Mappings -->
+  <Config Name="Data Directory" Target="/app/data" Default="/mnt/user/appdata/battery-optimizer/data" Mode="rw" Description="Data storage directory" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/battery-optimizer/data</Config>
+  <Config Name="Logs Directory" Target="/app/logs" Default="/mnt/user/appdata/battery-optimizer/logs" Mode="rw" Description="Logs storage directory" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/battery-optimizer/logs</Config>
+  
+  <!-- Database Configuration -->
+  <Config Name="Database Host" Target="DB_HOST" Default="192.168.1.3" Mode="" Description="MySQL/MariaDB host address" Type="Variable" Display="always" Required="true" Mask="false">192.168.1.3</Config>
+  <Config Name="Database Port" Target="DB_PORT" Default="3306" Mode="" Description="MySQL/MariaDB port" Type="Variable" Display="always" Required="true" Mask="false">3306</Config>
+  <Config Name="Database User" Target="DB_USER" Default="optimizer" Mode="" Description="Database username" Type="Variable" Display="always" Required="true" Mask="false">optimizer</Config>
+  <Config Name="Database Password" Target="DB_PASSWORD" Default="" Mode="" Description="Database password" Type="Variable" Display="always" Required="true" Mask="true"></Config>
+  <Config Name="Database Name" Target="DB_NAME" Default="battery_optimizer" Mode="" Description="Database name" Type="Variable" Display="always" Required="true" Mask="false">battery_optimizer</Config>
+  
+  <!-- Home Assistant Configuration -->
+  <Config Name="Home Assistant URL" Target="HA_URL" Default="http://192.168.1.3:8123" Mode="" Description="Home Assistant URL" Type="Variable" Display="always" Required="true" Mask="false">http://192.168.1.3:8123</Config>
+  <Config Name="Home Assistant Token" Target="HA_TOKEN" Default="" Mode="" Description="Home Assistant Long-Lived Access Token" Type="Variable" Display="always" Required="true" Mask="true"></Config>
+  
+  <!-- InfluxDB Configuration -->
+  <Config Name="InfluxDB Enabled" Target="INFLUX_ENABLED" Default="true" Mode="" Description="Enable InfluxDB integration (true/false)" Type="Variable" Display="always" Required="false" Mask="false">true</Config>
+  <Config Name="InfluxDB URL" Target="INFLUX_URL" Default="http://192.168.1.64:8086" Mode="" Description="InfluxDB URL" Type="Variable" Display="always" Required="false" Mask="false">http://192.168.1.64:8086</Config>
+  <Config Name="InfluxDB Token" Target="INFLUX_TOKEN" Default="" Mode="" Description="InfluxDB access token" Type="Variable" Display="always" Required="false" Mask="true"></Config>
+  <Config Name="InfluxDB Organization" Target="INFLUX_ORG" Default="unraid" Mode="" Description="InfluxDB organization" Type="Variable" Display="always" Required="false" Mask="false">unraid</Config>
+  <Config Name="InfluxDB Bucket" Target="INFLUX_BUCKET" Default="battery-optimizer" Mode="" Description="InfluxDB bucket name" Type="Variable" Display="always" Required="false" Mask="false">battery-optimizer</Config>
+  
+  <!-- Octopus Energy Configuration -->
+  <Config Name="Octopus Product Code" Target="OCTOPUS_PRODUCT" Default="AGILE-24-10-01" Mode="" Description="Octopus Energy product code" Type="Variable" Display="always" Required="true" Mask="false">AGILE-24-10-01</Config>
+  <Config Name="Octopus Tariff Code" Target="OCTOPUS_TARIFF" Default="E-1R-AGILE-24-10-01-E" Mode="" Description="Octopus Energy tariff code" Type="Variable" Display="always" Required="true" Mask="false">E-1R-AGILE-24-10-01-E</Config>
+  <Config Name="Octopus Region" Target="OCTOPUS_REGION" Default="E" Mode="" Description="Octopus Energy region (e.g., E for East England)" Type="Variable" Display="always" Required="true" Mask="false">E</Config>
+  
+  <!-- Application Configuration -->
+  <Config Name="Log Level" Target="LOG_LEVEL" Default="INFO" Mode="" Description="Logging level (DEBUG, INFO, WARNING, ERROR)" Type="Variable" Display="advanced" Required="false" Mask="false">INFO</Config>
+  <Config Name="Optimization Interval" Target="OPTIMIZATION_INTERVAL" Default="300" Mode="" Description="Optimization interval in seconds" Type="Variable" Display="advanced" Required="false" Mask="false">300</Config>
+  <Config Name="Price Fetch Interval" Target="PRICE_FETCH_INTERVAL" Default="1800" Mode="" Description="Price fetch interval in seconds" Type="Variable" Display="advanced" Required="false" Mask="false">1800</Config>
+  <Config Name="API Port" Target="API_PORT" Default="8000" Mode="" Description="Internal API port" Type="Variable" Display="advanced" Required="false" Mask="false">8000</Config>
+  <Config Name="Host IP" Target="HOST_IP" Default="192.168.1.60" Mode="" Description="Container host IP address" Type="Variable" Display="advanced" Required="false" Mask="false">192.168.1.60</Config>
+  
+  <!-- Battery Configuration -->
+  <Config Name="Battery Capacity (kWh)" Target="BATTERY_CAPACITY_KWH" Default="10.6" Mode="" Description="Battery capacity in kWh" Type="Variable" Display="always" Required="true" Mask="false">10.6</Config>
+  <Config Name="Battery Max Charge (kW)" Target="BATTERY_MAX_CHARGE_KW" Default="10.5" Mode="" Description="Maximum charge rate in kW" Type="Variable" Display="always" Required="true" Mask="false">10.5</Config>
+  <Config Name="Battery Max Discharge (kW)" Target="BATTERY_MAX_DISCHARGE_KW" Default="5.0" Mode="" Description="Maximum discharge rate in kW" Type="Variable" Display="always" Required="true" Mask="false">5.0</Config>
+  <Config Name="Battery Efficiency" Target="BATTERY_EFFICIENCY" Default="0.95" Mode="" Description="Battery round-trip efficiency (0.0-1.0)" Type="Variable" Display="advanced" Required="false" Mask="false">0.95</Config>
+  <Config Name="Battery Min SOC (%)" Target="BATTERY_MIN_SOC" Default="10" Mode="" Description="Minimum state of charge percentage" Type="Variable" Display="always" Required="true" Mask="false">10</Config>
+  <Config Name="Battery Max SOC (%)" Target="BATTERY_MAX_SOC" Default="100" Mode="" Description="Maximum state of charge percentage" Type="Variable" Display="always" Required="true" Mask="false">100</Config>
+  
+  <!-- Solar Configuration -->
+  <Config Name="Solar Capacity (kW)" Target="SOLAR_CAPACITY_KW" Default="10.6" Mode="" Description="Solar system capacity in kW" Type="Variable" Display="always" Required="true" Mask="false">10.6</Config>
+  
+  <!-- Home Assistant Entity IDs -->
+  <Config Name="HA Battery SOC Entity" Target="HA_ENTITY_BATTERY_SOC" Default="sensor.foxinverter_battery_soc" Mode="" Description="Home Assistant battery SOC sensor entity ID" Type="Variable" Display="always" Required="true" Mask="false">sensor.foxinverter_battery_soc</Config>
+  <Config Name="HA Solar Power Entity" Target="HA_ENTITY_SOLAR_POWER" Default="sensor.pv_power_foxinverter" Mode="" Description="Home Assistant solar power sensor entity ID" Type="Variable" Display="always" Required="true" Mask="false">sensor.pv_power_foxinverter</Config>
+  <Config Name="HA Solar Forecast Today Entity" Target="HA_ENTITY_SOLAR_FORECAST_TODAY" Default="sensor.solcast_pv_forecast_forecast_remaining_today" Mode="" Description="Home Assistant solar forecast today entity ID" Type="Variable" Display="advanced" Required="false" Mask="false">sensor.solcast_pv_forecast_forecast_remaining_today</Config>
+  <Config Name="HA Solar Forecast Next Hour Entity" Target="HA_ENTITY_SOLAR_FORECAST_NEXT_HOUR" Default="sensor.solcast_pv_forecast_power_in_1_hour" Mode="" Description="Home Assistant solar forecast next hour entity ID" Type="Variable" Display="advanced" Required="false" Mask="false">sensor.solcast_pv_forecast_power_in_1_hour</Config>
+  <Config Name="HA Battery Mode Entity" Target="HA_ENTITY_BATTERY_MODE" Default="select.foxinverter_work_mode" Mode="" Description="Home Assistant battery mode select entity ID" Type="Variable" Display="always" Required="true" Mask="false">select.foxinverter_work_mode</Config>
+  <Config Name="HA Discharge Current Entity" Target="HA_ENTITY_DISCHARGE_CURRENT" Default="number.foxinverter_max_discharge_current" Mode="" Description="Home Assistant discharge current number entity ID" Type="Variable" Display="advanced" Required="false" Mask="false">number.foxinverter_max_discharge_current</Config>
+  <Config Name="HA Immersion Main Entity" Target="HA_ENTITY_IMMERSION_MAIN" Default="switch.immersion_switch" Mode="" Description="Home Assistant main immersion switch entity ID" Type="Variable" Display="advanced" Required="false" Mask="false">switch.immersion_switch</Config>
+  <Config Name="HA Immersion Lucy Entity" Target="HA_ENTITY_IMMERSION_LUCY" Default="switch.immersion_lucy_switch" Mode="" Description="Home Assistant Lucy immersion switch entity ID" Type="Variable" Display="advanced" Required="false" Mask="false">switch.immersion_lucy_switch</Config>
+</Container>

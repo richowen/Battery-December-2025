@@ -2,15 +2,19 @@
 Battery Optimization Service - FastAPI Application
 """
 import logging
+import asyncio
 from contextlib import asynccontextmanager
+from datetime import datetime
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+from sqlalchemy import and_
 
 from app import __version__
 from app.config import settings
-from app.database import init_db, get_db
+from app.database import init_db, get_db, get_db_session
 from app.api import router as api_router
+from app.models import ManualOverride
 
 # Configure logging
 logging.basicConfig(
@@ -19,6 +23,47 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+
+# Background task for expiring manual overrides
+async def expire_manual_overrides_task():
+    """
+    Background task to auto-expire manual overrides
+    Runs every 5 minutes
+    """
+    logger.info("Starting manual override expiry background task")
+    
+    while True:
+        try:
+            await asyncio.sleep(300)  # 5 minutes
+            
+            with get_db_session() as db:
+                now = datetime.now()
+                
+                # Find expired overrides that are still active
+                expired_overrides = db.query(ManualOverride).filter(
+                    and_(
+                        ManualOverride.is_active == True,
+                        ManualOverride.expires_at <= now
+                    )
+                ).all()
+                
+                if expired_overrides:
+                    for override in expired_overrides:
+                        override.is_active = False
+                        override.cleared_at = now
+                        override.cleared_by = 'system_expiry'
+                        logger.info(
+                            f"Auto-expired manual override: {override.immersion_name} "
+                            f"(id={override.id}, was {override.desired_state})"
+                        )
+                    
+                    db.commit()
+                    logger.info(f"Expired {len(expired_overrides)} manual override(s)")
+                
+        except Exception as e:
+            logger.error(f"Error in manual override expiry task: {e}", exc_info=True)
+            await asyncio.sleep(60)  # Wait 1 minute before retrying
 
 
 @asynccontextmanager
@@ -35,10 +80,19 @@ async def lifespan(app: FastAPI):
         logger.error(f"Database initialization failed: {e}")
         raise
     
+    # Start background task for expiring manual overrides
+    expiry_task = asyncio.create_task(expire_manual_overrides_task())
+    logger.info("Manual override expiry task started")
+    
     yield
     
     # Shutdown
     logger.info("Shutting down Battery Optimization Service")
+    expiry_task.cancel()
+    try:
+        await expiry_task
+    except asyncio.CancelledError:
+        logger.info("Manual override expiry task cancelled")
 
 
 # Create FastAPI app

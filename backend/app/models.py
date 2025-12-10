@@ -140,3 +140,22 @@ class ScheduleOverride(Base):
         Index('idx_immersion_active', 'immersion_name', 'is_active'),
         Index('idx_activated', 'activated_at'),
     )
+
+
+class ManualOverride(Base):
+    """Manual override status for immersion heaters"""
+    __tablename__ = "manual_overrides"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    immersion_name = Column(String(50), nullable=False)  # 'main' or 'lucy'
+    is_active = Column(Boolean, nullable=False, default=True, index=True)
+    desired_state = Column(Boolean, nullable=False)  # ON=true, OFF=false
+    source = Column(String(50), default='user')  # 'user', 'dashboard', 'api'
+    created_at = Column(DateTime, server_default=func.now())
+    expires_at = Column(DateTime, nullable=False, index=True)
+    cleared_at = Column(DateTime, nullable=True)
+    cleared_by = Column(String(50), nullable=True)  # 'user', 'system_expiry', 'api'
+    
+    __table_args__ = (
+        Index('idx_active_immersion', 'immersion_name', 'is_active', 'expires_at'),
+    )
