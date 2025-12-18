@@ -56,20 +56,68 @@ class BatteryOptimizer:
         try:
             start_time = datetime.now()
             
+            # === DIAGNOSTIC LOGGING: Input Validation ===
+            logger.info("="*80)
+            logger.info("OPTIMIZATION DIAGNOSTIC START")
+            logger.info("="*80)
+            
+            # Log battery configuration
+            logger.info(f"Battery Config:")
+            logger.info(f"  - Capacity: {self.capacity_kwh} kWh")
+            logger.info(f"  - Max Charge: {self.max_charge_kw} kW")
+            logger.info(f"  - Max Discharge: {self.max_discharge_kw} kW")
+            logger.info(f"  - Efficiency: {self.efficiency}")
+            logger.info(f"  - Min SOC: {self.min_soc}%")
+            logger.info(f"  - Max SOC: {self.max_soc}%")
+            
+            # Log current SOC and validate
+            logger.info(f"Current SOC: {current_soc}%")
+            if current_soc < self.min_soc:
+                logger.error(f"❌ CONSTRAINT VIOLATION: current_soc ({current_soc}%) < min_soc ({self.min_soc}%)")
+            elif current_soc > self.max_soc:
+                logger.error(f"❌ CONSTRAINT VIOLATION: current_soc ({current_soc}%) > max_soc ({self.max_soc}%)")
+            else:
+                logger.info(f"✓ Current SOC within bounds [{self.min_soc}%, {self.max_soc}%]")
+            
+            # Validate efficiency
+            if self.efficiency <= 0 or self.efficiency > 1:
+                logger.error(f"❌ INVALID EFFICIENCY: {self.efficiency} (must be 0 < eff <= 1)")
+            
             # Prepare time periods (30-minute intervals)
             num_periods = horizon_hours * 2  # 30-min intervals
+            logger.info(f"Optimization horizon: {horizon_hours} hours ({num_periods} periods)")
             
             # Align prices to 30-min periods
             period_prices = self._align_prices_to_periods(prices, num_periods)
             
+            # Validate price data
+            logger.info(f"Price data: {len(prices)} raw periods")
+            logger.info(f"  - First 6 periods: {period_prices[:6]}")
+            logger.info(f"  - Min price: {min(period_prices):.2f}p")
+            logger.info(f"  - Max price: {max(period_prices):.2f}p")
+            logger.info(f"  - Avg price: {sum(period_prices)/len(period_prices):.2f}p")
+            if any(p is None or p != p for p in period_prices):  # Check for None or NaN
+                logger.error(f"❌ INVALID PRICE DATA: Contains None or NaN values")
+            
             # Align solar forecast to periods
             period_solar = self._align_solar_to_periods(solar_forecast, num_periods)
+            
+            # Validate solar data
+            logger.info(f"Solar forecast: {len(solar_forecast)} hourly values")
+            logger.info(f"  - First 6 periods: {period_solar[:6]}")
+            logger.info(f"  - Max solar: {max(period_solar):.2f} kW")
+            if any(s is None or s != s or s < 0 for s in period_solar):
+                logger.error(f"❌ INVALID SOLAR DATA: Contains None, NaN, or negative values")
             
             # Use constant load if not provided
             if load_forecast is None:
                 period_load = [2.0] * num_periods  # Assume 2kW constant load
+                logger.info(f"Load forecast: Using default 2.0 kW constant load")
             else:
                 period_load = self._align_load_to_periods(load_forecast, num_periods)
+                logger.info(f"Load forecast: {len(load_forecast)} hourly values")
+                logger.info(f"  - First 6 periods: {period_load[:6]}")
+                logger.info(f"  - Avg load: {sum(period_load)/len(period_load):.2f} kW")
             
             # Create optimization problem
             prob = LpProblem("Battery_Optimization", LpMinimize)
@@ -134,14 +182,35 @@ class BatteryOptimizer:
             # 5. Minimum SOC at end for resilience
             prob += soc[num_periods - 1] >= 20
             
+            # === DIAGNOSTIC LOGGING: Pre-solve validation ===
+            logger.info("="*80)
+            logger.info("Constraint Summary:")
+            logger.info(f"  - Total variables: {len(prob.variables())}")
+            logger.info(f"  - Total constraints: {len(prob.constraints)}")
+            logger.info(f"  - Initial SOC constraint: soc[0] = {current_soc}% + charge/discharge effects")
+            logger.info(f"  - Final SOC constraint: soc[{num_periods-1}] >= 20%")
+            logger.info(f"  - SOC bounds: [{self.min_soc}%, {self.max_soc}%] for all periods")
+            logger.info("="*80)
+            
             # Solve
+            logger.info("Starting CBC solver...")
             prob.solve()
             
             # Check solution status
             status = LpStatus[prob.status]
+            logger.info(f"Solver status: {status}")
             
             if status != "Optimal":
-                logger.warning(f"Optimization status: {status}")
+                logger.error("="*80)
+                logger.error(f"❌ OPTIMIZATION FAILED: {status}")
+                logger.error("="*80)
+                logger.error("Possible causes:")
+                logger.error("  1. Current SOC outside allowed bounds")
+                logger.error("  2. Conflicting constraints (e.g., min_soc > max_soc)")
+                logger.error("  3. Invalid efficiency value")
+                logger.error("  4. Missing or invalid price/solar/load data")
+                logger.error("  5. Infeasible energy balance (load > solar + grid + battery)")
+                logger.error("="*80)
                 return self._fallback_schedule(current_soc, period_prices[0])
             
             # Extract solution
