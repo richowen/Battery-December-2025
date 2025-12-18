@@ -179,8 +179,11 @@ class BatteryOptimizer:
             # 4. Cannot charge and discharge simultaneously (simplified)
             # This is handled implicitly by the objective function
             
-            # 5. Minimum SOC at end for resilience
-            prob += soc[num_periods - 1] >= 20
+            # 5. Adaptive minimum SOC at end for resilience
+            # Use adaptive target to prevent infeasibility when starting at low SOC
+            target_final_soc = max(self.min_soc, min(20, current_soc))
+            prob += soc[num_periods - 1] >= target_final_soc
+            logger.info(f"  - Adaptive final SOC target: {target_final_soc}% (based on current {current_soc}%)")
             
             # === DIAGNOSTIC LOGGING: Pre-solve validation ===
             logger.info("="*80)
