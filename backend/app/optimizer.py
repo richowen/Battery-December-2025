@@ -119,6 +119,11 @@ class BatteryOptimizer:
                 logger.info(f"  - First 6 periods: {period_load[:6]}")
                 logger.info(f"  - Avg load: {sum(period_load)/len(period_load):.2f} kW")
             
+            # Grid connection limits
+            max_grid_import_kw = 15.0  # Typical UK domestic supply limit
+            max_grid_export_kw = 5.0   # User's inverter export limit
+            logger.info(f"Grid limits: Import={max_grid_import_kw}kW, Export={max_grid_export_kw}kW")
+            
             # Create optimization problem
             prob = LpProblem("Battery_Optimization", LpMinimize)
             
@@ -136,11 +141,11 @@ class BatteryOptimizer:
                   for t in range(num_periods)]
             
             # grid_import[t] = kW imported from grid (positive)
-            grid_import = [LpVariable(f"grid_import_{t}", 0, None)
+            grid_import = [LpVariable(f"grid_import_{t}", 0, max_grid_import_kw)
                           for t in range(num_periods)]
             
             # grid_export[t] = kW exported to grid (positive)
-            grid_export = [LpVariable(f"grid_export_{t}", 0, None) 
+            grid_export = [LpVariable(f"grid_export_{t}", 0, max_grid_export_kw)
                           for t in range(num_periods)]
             
             # Objective: Minimize total cost
